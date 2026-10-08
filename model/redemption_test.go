@@ -156,6 +156,11 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 	require.NoError(t, DB.First(&redemption, "name = ?", "redeem-test").Error)
 	assert.Equal(t, common.RedemptionCodeStatusUsed, redemption.Status)
 	assert.Equal(t, userId, redemption.UsedUserId)
+	var topUpLogs []Log
+	require.NoError(t, DB.Where("user_id = ? AND type = ?", userId, LogTypeTopup).Find(&topUpLogs).Error)
+	require.NotEmpty(t, topUpLogs, "balance redemption must leave a top-up log row")
+	assert.Contains(t, topUpLogs[0].Content, "通过兑换码充值")
+	assert.Contains(t, topUpLogs[0].Content, fmt.Sprintf("%d", redemption.Id))
 	_, err = Redeem(key, userId)
 	require.Error(t, err)
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
@@ -211,6 +216,12 @@ func TestRedeemSubscriptionCreatesEntitlementAndRechargeEvent(t *testing.T) {
 	require.Len(t, subscriptions, 1)
 	assert.Equal(t, plan.Id, subscriptions[0].PlanId)
 	assert.Equal(t, "redemption", subscriptions[0].Source)
+
+	var topUpLogs []Log
+	require.NoError(t, DB.Where("user_id = ? AND type = ?", userId, LogTypeTopup).Find(&topUpLogs).Error)
+	require.NotEmpty(t, topUpLogs, "subscription redemption must leave a top-up log row")
+	assert.Contains(t, topUpLogs[0].Content, plan.Title)
+	assert.Contains(t, topUpLogs[0].Content, fmt.Sprintf("%d", redemption.Id))
 }
 
 func TestRedeemSubscriptionFailureLeavesCodeAvailable(t *testing.T) {

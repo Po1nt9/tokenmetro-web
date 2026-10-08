@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -85,7 +86,8 @@ func AddRedemption(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionCountMax)
 		return
 	}
-	if err := validateRedemptionOutcome(&redemption); err != nil {
+	planTitle, err := validateRedemptionOutcome(&redemption)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -129,13 +131,21 @@ func AddRedemption(c *gin.Context) {
 		}
 		keys = append(keys, key)
 	}
-	recordManageAudit(c, "redemption.create", map[string]any{
-		"name":                 redemption.Name,
-		"count":                redemption.Count,
-		"quota":                redemption.Quota,
-		"outcome_type":         redemption.EffectiveOutcomeType(),
-		"subscription_plan_id": redemption.SubscriptionPlanId,
-	})
+	if redemption.EffectiveOutcomeType() == model.RedemptionOutcomeSubscription {
+		recordManageAudit(c, "redemption.create_subscription", map[string]any{
+			"name":  redemption.Name,
+			"count": redemption.Count,
+			"plan":  planTitle,
+		})
+	} else {
+		recordManageAudit(c, "redemption.create", map[string]any{
+			"name":                 redemption.Name,
+			"count":                redemption.Count,
+			"quota":                logger.LogQuota(redemption.Quota),
+			"outcome_type":         redemption.EffectiveOutcomeType(),
+			"subscription_plan_id": redemption.SubscriptionPlanId,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -177,7 +187,7 @@ func UpdateRedemption(c *gin.Context) {
 			return
 		}
 		if redemption.OutcomeType != "" || redemption.SubscriptionPlanId != 0 {
-			if err := validateRedemptionOutcome(&redemption); err != nil {
+			if _, err := validateRedemptionOutcome(&redemption); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -238,23 +248,25 @@ func DeleteInvalidRedemption(c *gin.Context) {
 	return
 }
 
-func validateRedemptionOutcome(redemption *model.Redemption) error {
+func validateRedemptionOutcome(redemption *model.Redemption) (string, error) {
 	if redemption.OutcomeType == "" {
 		redemption.OutcomeType = model.RedemptionOutcomeBalance
 	}
 	if err := redemption.ValidateOutcome(); err != nil {
-		return err
+		return "", err
 	}
 	if redemption.EffectiveOutcomeType() == model.RedemptionOutcomeSubscription {
 		var plan model.SubscriptionPlan
 		if err := model.DB.Where("id = ?", redemption.SubscriptionPlanId).First(&plan).Error; err != nil {
-			return errors.New("subscription plan not found")
+			common.SysError("failed to load subscription plan for redemption: " + err.Error())
+			return "", errors.New("subscription plan not found")
 		}
 		if !plan.Enabled {
-			return errors.New("subscription plan is disabled")
+			return "", errors.New("subscription plan is disabled")
 		}
+		return plan.Title, nil
 	}
-	return nil
+	return "", nil
 }
 
 func validateExpiredTime(c *gin.Context, expired int64) (bool, string) {

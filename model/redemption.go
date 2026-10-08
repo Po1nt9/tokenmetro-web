@@ -105,12 +105,8 @@ func PreviewRedemption(key string, userId int) (RedemptionPreview, error) {
 	if key == "" || userId <= 0 {
 		return preview, ErrRedeemFailed
 	}
-	keyCol := "`key`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		keyCol = `"key"`
-	}
 	var redemption Redemption
-	if err := DB.Where(keyCol+" = ? AND status = ?", key, common.RedemptionCodeStatusEnabled).First(&redemption).Error; err != nil {
+	if err := DB.Where(commonKeyCol+" = ? AND status = ?", key, common.RedemptionCodeStatusEnabled).First(&redemption).Error; err != nil {
 		return preview, ErrRedeemFailed
 	}
 	if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
@@ -277,14 +273,11 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 	var subscription *UserSubscription
 	var walletQuota int
 	var inviterId int
+	var planTitle string
 
-	keyCol := "`key`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		keyCol = `"key"`
-	}
 	common.RandomSleep()
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error; err != nil {
+		if err := lockForUpdate(tx).Where(commonKeyCol+" = ?", key).First(redemption).Error; err != nil {
 			return errors.New("无效的兑换码")
 		}
 		if redemption.Status != common.RedemptionCodeStatusEnabled {
@@ -311,6 +304,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 			if !plan.Enabled {
 				return errors.New("套餐未启用")
 			}
+			planTitle = plan.Title
 			// Serialize purchases from different redemption codes for the same user.
 			var userRow User
 			if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
@@ -377,6 +371,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 		if subscription.UpgradeGroup != "" {
 			refreshSubscriptionUserGroupCache(userId, "redemption")
 		}
+		RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码开通订阅，套餐: %s，兑换码ID %d", planTitle, redemption.Id))
 	} else {
 		syncCreditUserQuotaCache(userId, walletQuota, "redemption")
 		RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(walletQuota), redemption.Id))

@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -17,6 +19,11 @@ import (
 
 func setupRedemptionPreviewAPI(t *testing.T) (*gin.Engine, *model.User, string) {
 	t.Helper()
+	// The redemption model queries use the shared dialect column names
+	// (model.commonKeyCol). Initialize them before the fixture installs its own
+	// in-memory database, the same way model_list_test.go does.
+	initModelListColumnNames(t)
+	require.NoError(t, i18n.Init())
 	user, token := setupAccessTokenAudit(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Redemption{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.Log{}))
 	previousCompliance := *operation_setting.GetPaymentSetting()
@@ -78,7 +85,7 @@ func TestRedemptionPreviewAPIUsesGenericFailureForUnavailableCode(t *testing.T) 
 			response := redemptionAPIRequest(router, "/api/user/topup/preview", token, testCode)
 			require.Equal(t, http.StatusOK, response.Code)
 			assert.Contains(t, response.Body.String(), `"success":false`)
-			assert.Contains(t, response.Body.String(), "redeem.failed")
+			assert.Contains(t, response.Body.String(), i18n.Translate(i18n.DefaultLang, i18n.MsgRedeemFailed))
 			assert.NotContains(t, response.Body.String(), state.name)
 		})
 	}
@@ -94,8 +101,44 @@ func TestRedemptionExecuteAfterPreviewIsRevalidated(t *testing.T) {
 	confirmation := redemptionAPIRequest(router, "/api/user/topup", token, "10000000000000000000000000000071")
 	require.Equal(t, http.StatusOK, confirmation.Code)
 	assert.Contains(t, confirmation.Body.String(), `"success":false`)
-	assert.Contains(t, confirmation.Body.String(), "兑换失败")
+	assert.Contains(t, confirmation.Body.String(), i18n.Translate(i18n.DefaultLang, i18n.MsgRedeemFailed))
 	var stored model.User
 	require.NoError(t, model.DB.First(&stored, user.Id).Error)
 	assert.Equal(t, 750, stored.Quota)
+}
+
+func TestAddRedemptionRejectsUnavailableSubscriptionPlan(t *testing.T) {
+	_, _, token := setupRedemptionPreviewAPI(t)
+	disabledPlan := &model.SubscriptionPlan{Title: "Disabled plan", DurationUnit: model.SubscriptionDurationMonth, DurationValue: 1}
+	require.NoError(t, model.DB.Create(disabledPlan).Error)
+	require.NoError(t, model.DB.Model(disabledPlan).Update("enabled", false).Error)
+
+	router := gin.New()
+	router.POST("/api/redemption", middleware.AdminAuth(), AddRedemption)
+	for _, testCase := range []struct {
+		name        string
+		planId      int
+		wantMessage string
+	}{
+		{name: "plan missing", planId: 999999, wantMessage: "subscription plan not found"},
+		{name: "plan disabled", planId: disabledPlan.Id, wantMessage: "subscription plan is disabled"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := common.Marshal(map[string]any{
+				"name":                 "subscription batch",
+				"count":                1,
+				"quota":                0,
+				"outcome_type":         model.RedemptionOutcomeSubscription,
+				"subscription_plan_id": testCase.planId,
+			})
+			require.NoError(t, err)
+			request := httptest.NewRequest(http.MethodPost, "/api/redemption", bytes.NewReader(payload))
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code)
+			assert.Contains(t, response.Body.String(), `"success":false`)
+			assert.Contains(t, response.Body.String(), testCase.wantMessage)
+		})
+	}
 }
