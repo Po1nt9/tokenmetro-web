@@ -25,10 +25,27 @@ import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { redeemTopupCode } from '../api'
+import type { RedemptionOutcome } from '../types'
 
 // ============================================================================
 // Redemption Hook
 // ============================================================================
+
+function getRedemptionSuccessMessage(data: RedemptionOutcome | number): string {
+  if (typeof data === 'number') {
+    return i18next.t('Redemption successful! Added: {{quota}}', {
+      quota: formatQuota(data),
+    })
+  }
+
+  if (data.outcome_type === 'balance') {
+    return i18next.t('Redemption successful! Added: {{quota}}', {
+      quota: formatQuota(data.wallet_quota ?? 0),
+    })
+  }
+
+  return i18next.t('Subscription redemption successful')
+}
 
 export function useRedemption() {
   const [redeeming, setRedeeming] = useState(false)
@@ -44,12 +61,7 @@ export function useRedemption() {
       const response = await redeemTopupCode({ key: code })
 
       if (response.success && response.data) {
-        const quotaAdded = response.data
-        toast.success(
-          i18next.t('Redemption successful! Added: {{quota}}', {
-            quota: formatQuota(quotaAdded),
-          })
-        )
+        toast.success(getRedemptionSuccessMessage(response.data))
         await getSelf()
         return true
       }

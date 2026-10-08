@@ -31,8 +31,11 @@ type Redemption struct {
 	RedeemedTime       int64                 `json:"redeemed_time" gorm:"bigint"`
 	Count              int                   `json:"count" gorm:"-:all"` // only for api request
 	UsedUserId         int                   `json:"used_user_id"`
-	DeletedAt          gorm.DeletedAt        `gorm:"index"`
-	ExpiredTime        int64                 `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	// SaleOrderId is nullable because this repository has no linked-shop order fact yet.
+	// A future shop integration may populate its stable order reference without storing code text or inventing sale value.
+	SaleOrderId *string        `json:"sale_order_id,omitempty" gorm:"type:varchar(128);default:null"`
+	DeletedAt   gorm.DeletedAt `gorm:"index"`
+	ExpiredTime int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
 
 func (redemption Redemption) EffectiveOutcomeType() RedemptionOutcomeType {
@@ -66,6 +69,8 @@ type RechargeEvent struct {
 	WalletQuota    int                   `json:"wallet_quota,omitempty"`
 	PlanId         int                   `json:"plan_id,omitempty"`
 	SubscriptionId int                   `json:"subscription_id,omitempty"`
+	// SaleOrderId is absent until a trusted linked-shop order reference is available.
+	SaleOrderId *string `json:"sale_order_id,omitempty"`
 }
 
 type RedemptionResult struct {
@@ -228,9 +233,15 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 			if !plan.Enabled {
 				return errors.New("套餐未启用")
 			}
+			// Serialize purchases from different redemption codes for the same user.
+			var userRow User
+			if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
+				return err
+			}
 			plan.NormalizeDefaults()
 			subscription, err = CreateUserSubscriptionFromPlanTx(tx, userId, &plan, "redemption")
 			if err != nil {
+
 				return err
 			}
 		} else {
@@ -279,6 +290,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 			InviterId:    inviterId,
 			OutcomeType:  outcome,
 			WalletQuota:  walletQuota,
+			SaleOrderId:  redemption.SaleOrderId,
 		},
 	}
 	if subscription != nil {

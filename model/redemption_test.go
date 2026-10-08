@@ -88,6 +88,7 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, RedemptionOutcomeBalance, result.OutcomeType)
 	assert.Equal(t, 500, result.WalletQuota)
+	assert.Nil(t, result.RechargeEvent.SaleOrderId, "no linked-shop sale order is available in this system")
 
 	var user User
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
@@ -125,7 +126,12 @@ func TestRedeemSubscriptionCreatesEntitlementAndRechargeEvent(t *testing.T) {
 	plan := &SubscriptionPlan{Title: "Redemption plan", Enabled: true, DurationUnit: SubscriptionDurationMonth, DurationValue: 1, TotalAmount: 1200, QuotaResetPeriod: SubscriptionResetMonthly, UpgradeGroup: "pro"}
 	require.NoError(t, DB.Create(plan).Error)
 	InvalidateSubscriptionPlanCache(plan.Id)
-	require.NoError(t, DB.Model(&Redemption{}).Where("key = ?", key).Updates(map[string]any{"outcome_type": RedemptionOutcomeSubscription, "subscription_plan_id": plan.Id}).Error)
+	shopOrderId := "shop-order-test-001"
+	require.NoError(t, DB.Model(&Redemption{}).Where("key = ?", key).Updates(map[string]any{
+		"outcome_type":         RedemptionOutcomeSubscription,
+		"subscription_plan_id": plan.Id,
+		"sale_order_id":        shopOrderId,
+	}).Error)
 	result, err := Redeem(key, userId)
 	require.NoError(t, err)
 	assert.Equal(t, RedemptionOutcomeSubscription, result.OutcomeType)
@@ -135,6 +141,8 @@ func TestRedeemSubscriptionCreatesEntitlementAndRechargeEvent(t *testing.T) {
 	assert.Equal(t, redemption.Id, result.RechargeEvent.RedemptionId)
 	assert.Equal(t, RedemptionOutcomeSubscription, result.RechargeEvent.OutcomeType)
 	assert.Zero(t, result.WalletQuota)
+	require.NotNil(t, result.RechargeEvent.SaleOrderId)
+	assert.Equal(t, shopOrderId, *result.RechargeEvent.SaleOrderId)
 	var user User
 	require.NoError(t, DB.First(&user, userId).Error)
 	assert.Zero(t, user.Quota)
@@ -211,6 +219,60 @@ func TestRedeemSubscriptionConcurrentSingleSuccess(t *testing.T) {
 	assert.EqualValues(t, 1, count)
 }
 
+func TestRedeemDifferentCodesRespectSubscriptionPurchaseLimitConcurrently(t *testing.T) {
+	previousDB, previousLogDB := DB, LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	initCol()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	DB, LOG_DB = db, db
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(6)
+	t.Cleanup(func() {
+		DB, LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		initCol()
+		_ = sqlDB.Close()
+	})
+
+	userId, firstKey := setupRedeemFixture(t, 100)
+	secondKey := "10000000000000000000000000000002"
+	require.NoError(t, DB.Create(&Redemption{
+		Name: "redeem-test-second", Key: secondKey, Status: common.RedemptionCodeStatusEnabled,
+		Quota: 100, CreatedTime: common.GetTimestamp(),
+	}).Error)
+	require.NoError(t, DB.AutoMigrate(&SubscriptionPlan{}, &UserSubscription{}))
+	plan := &SubscriptionPlan{Title: "One purchase", Enabled: true, DurationUnit: SubscriptionDurationMonth, DurationValue: 1, MaxPurchasePerUser: 1}
+	require.NoError(t, DB.Create(plan).Error)
+	require.NoError(t, DB.Model(&Redemption{}).Where("key IN ?", []string{firstKey, secondKey}).Updates(map[string]any{
+		"outcome_type": RedemptionOutcomeSubscription, "subscription_plan_id": plan.Id,
+	}).Error)
+
+	start := make(chan struct{})
+	errors := make([]error, 2)
+	var wg sync.WaitGroup
+	for i, key := range []string{firstKey, secondKey} {
+		wg.Add(1)
+		go func(index int, code string) {
+			defer wg.Done()
+			<-start
+			_, errors[index] = Redeem(code, userId)
+		}(i, key)
+	}
+	close(start)
+	wg.Wait()
+
+	var count int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ? AND plan_id = ?", userId, plan.Id).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "different codes must not bypass the per-user purchase limit")
+	var usedCount int64
+	require.NoError(t, DB.Model(&Redemption{}).Where("used_user_id = ? AND status = ?", userId, common.RedemptionCodeStatusUsed).Count(&usedCount).Error)
+	assert.EqualValues(t, 1, usedCount, "only the redemption that created the subscription may be consumed")
+}
+
 func TestUpdateRedemptionAllowsUnusedOutcomeChange(t *testing.T) {
 	_, key := setupRedeemFixture(t, 100)
 	require.NoError(t, DB.AutoMigrate(&SubscriptionPlan{}))
@@ -244,6 +306,36 @@ func TestUpdateRedemptionRejectsUsedOutcomeChange(t *testing.T) {
 	var stored Redemption
 	require.NoError(t, DB.First(&stored, "key = ?", key).Error)
 	assert.Equal(t, 100, stored.Quota)
+}
+
+func TestRedemptionSaleOrderReferenceIsNullableAndMigratesIdempotently(t *testing.T) {
+	db := DB
+	legacy := struct {
+		Id          int    `gorm:"primaryKey"`
+		Key         string `gorm:"type:char(32);uniqueIndex"`
+		Status      int
+		Quota       int
+		Name        string
+		UserId      int
+		CreatedTime int64
+	}{Key: "10000000000000000000000000000010", Status: common.RedemptionCodeStatusEnabled, Quota: 10, Name: "sale-reference"}
+	require.NoError(t, db.Table("sale_reference_redemptions").AutoMigrate(&legacy))
+	require.NoError(t, db.Table("sale_reference_redemptions").Create(&legacy).Error)
+	require.NoError(t, db.Table("sale_reference_redemptions").AutoMigrate(&Redemption{}))
+	require.NoError(t, db.Table("sale_reference_redemptions").AutoMigrate(&Redemption{}))
+
+	var stored Redemption
+	require.NoError(t, db.Table("sale_reference_redemptions").First(&stored, legacy.Id).Error)
+	assert.Nil(t, stored.SaleOrderId, "legacy rows have no external sale fact")
+
+	orderId := "shop-order-2026-10-08-001"
+	require.NoError(t, db.Table("sale_reference_redemptions").Model(&stored).Select("sale_order_id").Updates(map[string]any{
+		"sale_order_id": orderId,
+	}).Error)
+	var updated Redemption
+	require.NoError(t, db.Table("sale_reference_redemptions").First(&updated, legacy.Id).Error)
+	require.NotNil(t, updated.SaleOrderId)
+	assert.Equal(t, orderId, *updated.SaleOrderId)
 }
 
 func TestRedemptionOutcomeMigrationPreservesLegacyRowsAndIsIdempotent(t *testing.T) {
