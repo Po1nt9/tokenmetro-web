@@ -83,6 +83,7 @@ export function Case({ label, code }: { label: string; code: string }) {
         onConfirmRedemption={() => {}}
         onCancelPreview={() => {}}
         redeeming={false}
+        confirmingRedemption={false}
         onOpenBilling={() => {}}
       />
     </div>

@@ -53,6 +53,7 @@ const props = {
   onConfirmRedemption: vi.fn(),
   onCancelPreview: vi.fn(),
   redeeming: false,
+  confirmingRedemption: false,
   onOpenBilling: vi.fn(),
 }
 
@@ -141,11 +142,57 @@ describe('redemption code purchases', () => {
     )
 
     expect(screen.getByRole('status')).toHaveTextContent('Monthly Pro')
-    expect(screen.getByRole('button', { name: 'Confirm redemption' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Confirm redemption' })
+    ).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm redemption' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(props.onConfirmRedemption).toHaveBeenCalledOnce()
     expect(props.onCancelPreview).toHaveBeenCalledOnce()
+  })
+
+  it('removes the old summary when the user edits the code and cannot confirm that preview', () => {
+    const summary = {
+      outcome_type: 'balance' as const,
+      wallet_quota: 750,
+    }
+    const { rerender } = render(
+      <RechargeFormCard
+        {...props}
+        redemptionCode='CODE-A'
+        preview={summary}
+        onRedemptionCodeChange={(code) => {
+          expect(code).toBe('CODE-B')
+          rerender(
+            <RechargeFormCard {...props} redemptionCode={code} preview={null} />
+          )
+        }}
+      />
+    )
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Redemption code' }), {
+      target: { value: 'CODE-B' },
+    })
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Preview redemption' })
+    ).toBeEnabled()
+    expect(props.onConfirmRedemption).not.toHaveBeenCalled()
+  })
+
+  it('disables code editing while confirmation is in progress', () => {
+    render(
+      <RechargeFormCard
+        {...props}
+        redemptionCode='CODE-A'
+        confirmingRedemption
+      />
+    )
+
+    expect(
+      screen.getByRole('textbox', { name: 'Redemption code' })
+    ).toBeDisabled()
   })
 
   it('prevents repeated redemption while processing', () => {

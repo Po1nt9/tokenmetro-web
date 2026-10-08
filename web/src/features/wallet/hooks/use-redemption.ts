@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18next from 'i18next'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { getSelf } from '@/lib/api'
@@ -49,59 +49,83 @@ function getRedemptionSuccessMessage(data: RedemptionOutcome | number): string {
 
 export function useRedemption() {
   const [redeeming, setRedeeming] = useState(false)
+  const [confirmingRedemption, setConfirmingRedemption] = useState(false)
   const [preview, setPreview] = useState<RedemptionPreview | null>(null)
+  const previewCodeRef = useRef<string | null>(null)
+  const previewRequestIdRef = useRef(0)
 
   const previewCode = useCallback(async (code: string): Promise<boolean> => {
     if (!code || code.trim() === '') {
       toast.error(i18next.t('Please enter a redemption code'))
       return false
     }
+    const requestId = ++previewRequestIdRef.current
+    previewCodeRef.current = null
+    setPreview(null)
     try {
       setRedeeming(true)
       const response = await previewRedemptionCode({ key: code })
+      if (requestId !== previewRequestIdRef.current) return false
       if (response.success && response.data) {
+        previewCodeRef.current = code
         setPreview(response.data)
         return true
       }
-      setPreview(null)
       handleServerError(response, i18next.t('Redemption failed'))
       return false
     } catch (error) {
-      setPreview(null)
+      if (requestId !== previewRequestIdRef.current) return false
       handleServerError(error, i18next.t('Redemption failed'))
       return false
     } finally {
-      setRedeeming(false)
+      if (requestId === previewRequestIdRef.current) setRedeeming(false)
     }
   }, [])
 
-  const redeemCode = useCallback(async (code: string): Promise<boolean> => {
-    if (!code || code.trim() === '') {
-      toast.error(i18next.t('Please enter a redemption code'))
-      return false
-    }
-    try {
-      setRedeeming(true)
-      const response = await redeemTopupCode({ key: code })
-      if (response.success && response.data) {
-        toast.success(getRedemptionSuccessMessage(response.data))
-        setPreview(null)
-        await getSelf()
-        return true
+  const confirmRedemption = useCallback(
+    async (code: string): Promise<boolean> => {
+      if (!preview || !code || code !== previewCodeRef.current) return false
+
+      const requestId = ++previewRequestIdRef.current
+      previewCodeRef.current = null
+      setPreview(null)
+      try {
+        setRedeeming(true)
+        setConfirmingRedemption(true)
+        const response = await redeemTopupCode({ key: code })
+        if (response.success && response.data) {
+          toast.success(getRedemptionSuccessMessage(response.data))
+          await getSelf()
+          return true
+        }
+        handleServerError(response, i18next.t('Redemption failed'))
+        return false
+      } catch (error) {
+        handleServerError(error, i18next.t('Redemption failed'))
+        return false
+      } finally {
+        if (requestId === previewRequestIdRef.current) {
+          setRedeeming(false)
+          setConfirmingRedemption(false)
+        }
       }
-      setPreview(null)
-      handleServerError(response, i18next.t('Redemption failed'))
-      return false
-    } catch (error) {
-      setPreview(null)
-      handleServerError(error, i18next.t('Redemption failed'))
-      return false
-    } finally {
-      setRedeeming(false)
-    }
-  }, [])
+    },
+    [preview]
+  )
 
-  const clearPreview = useCallback(() => setPreview(null), [])
+  const clearPreview = useCallback(() => {
+    previewRequestIdRef.current += 1
+    previewCodeRef.current = null
+    setPreview(null)
+    if (!confirmingRedemption) setRedeeming(false)
+  }, [confirmingRedemption])
 
-  return { redeeming, preview, previewCode, redeemCode, clearPreview }
+  return {
+    redeeming,
+    confirmingRedemption,
+    preview,
+    previewCode,
+    confirmRedemption,
+    clearPreview,
+  }
 }

@@ -54,7 +54,14 @@ export function Wallet(props: WalletProps) {
     transferQuota,
     transferring,
   } = useAffiliate()
-  const { redeeming, preview, previewCode, redeemCode, clearPreview } = useRedemption()
+  const {
+    redeeming,
+    confirmingRedemption,
+    preview,
+    previewCode,
+    confirmRedemption,
+    clearPreview,
+  } = useRedemption()
 
   // Fetch and refresh user data
   const fetchUser = useCallback(async () => {
@@ -105,7 +112,7 @@ export function Wallet(props: WalletProps) {
 
   const handleConfirmRedemption = async () => {
     if (!redemptionCode || !preview) return
-    const success = await redeemCode(redemptionCode)
+    const success = await confirmRedemption(redemptionCode)
     if (success) {
       setRedemptionCode('')
       await fetchUser()
@@ -158,6 +165,7 @@ export function Wallet(props: WalletProps) {
                   onConfirmRedemption={handleConfirmRedemption}
                   onCancelPreview={clearPreview}
                   redeeming={redeeming}
+                  confirmingRedemption={confirmingRedemption}
                   loading={topupLoading}
                   onOpenBilling={() => setBillingDialogOpen(true)}
                 />

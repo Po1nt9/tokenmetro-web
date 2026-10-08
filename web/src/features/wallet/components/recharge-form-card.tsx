@@ -51,6 +51,7 @@ interface RechargeFormCardProps {
   onConfirmRedemption: () => void
   onCancelPreview: () => void
   redeeming: boolean
+  confirmingRedemption: boolean
   loading?: boolean
   onOpenBilling?: () => void
 }
@@ -64,6 +65,7 @@ export function RechargeFormCard({
   onConfirmRedemption,
   onCancelPreview,
   redeeming,
+  confirmingRedemption,
   loading,
   onOpenBilling,
 }: RechargeFormCardProps) {
@@ -169,6 +171,7 @@ export function RechargeFormCard({
                   onChange={(e) => onRedemptionCodeChange(e.target.value)}
                   placeholder={t('Paste your redemption code')}
                   aria-label={t('Redemption code')}
+                  disabled={confirmingRedemption}
                   className='h-9 min-w-0 pl-9'
                 />
               </div>
@@ -183,21 +186,47 @@ export function RechargeFormCard({
               </Button>
             </div>
             {preview && (
-              <div role='status' className='mt-3 space-y-2 rounded-md border p-3 text-sm'>
+              <div
+                role='status'
+                className='mt-3 space-y-2 rounded-md border p-3 text-sm'
+              >
                 {preview.outcome_type === 'balance' ? (
-                  <p>{t('Wallet balance will increase by {{quota}}', { quota: preview.wallet_quota ?? 0 })}</p>
+                  <p>
+                    {t('Wallet balance will increase by {{quota}}', {
+                      quota: preview.wallet_quota ?? 0,
+                    })}
+                  </p>
                 ) : (
                   <>
                     <p>{preview.subscription?.plan_title}</p>
-                    <p>{t('Validity')}: {preview.subscription?.duration_value} {preview.subscription?.duration_unit}</p>
-                    <p>{t('Quota')}: {preview.subscription?.quota}</p>
-                    <p>{t('Reset period')}: {preview.subscription?.reset_period}</p>
-                    {(preview.subscription?.upgrade_group || preview.subscription?.downgrade_group) && (
-                      <p>{t('Group effect')}: {preview.subscription.upgrade_group || t('No change')} → {preview.subscription.downgrade_group || t('Restore previous group')}</p>
+                    <p>
+                      {t('Validity')}: {preview.subscription?.duration_value}{' '}
+                      {preview.subscription?.duration_unit}
+                    </p>
+                    <p>
+                      {t('Quota')}: {preview.subscription?.quota}
+                    </p>
+                    <p>
+                      {t('Reset period')}: {preview.subscription?.reset_period}
+                    </p>
+                    {(preview.subscription?.upgrade_group ||
+                      preview.subscription?.downgrade_group) && (
+                      <p>
+                        {t('Group effect')}:{' '}
+                        {preview.subscription.upgrade_group || t('No change')} →{' '}
+                        {preview.subscription.downgrade_group ||
+                          t('Restore previous group')}
+                      </p>
                     )}
                   </>
                 )}
-                <Button type='button' variant='ghost' size='sm' onClick={onCancelPreview} disabled={redeeming}>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={onCancelPreview}
+                  disabled={redeeming}
+                >
                   {t('Cancel')}
                 </Button>
               </div>
