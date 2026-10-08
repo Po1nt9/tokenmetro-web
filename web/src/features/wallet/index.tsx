@@ -43,18 +43,11 @@ export function Wallet(props: WalletProps) {
     !!props.initialShowHistory
   )
   const [redemptionCode, setRedemptionCode] = useState('')
+  const [subscriptionRefreshVersion, setSubscriptionRefreshVersion] =
+    useState(0)
 
   const { topupInfo, loading: topupLoading } = useTopupInfo()
   const { affiliateLink, loading: affiliateLoading } = useAffiliate()
-  const {
-    redeeming,
-    confirmingRedemption,
-    preview,
-    previewCode,
-    confirmRedemption,
-    clearPreview,
-  } = useRedemption()
-
   const fetchUser = useCallback(async () => {
     try {
       setUserLoading(true)
@@ -70,6 +63,23 @@ export function Wallet(props: WalletProps) {
       setUserLoading(false)
     }
   }, [t])
+
+  const {
+    redeeming,
+    confirmingRedemption,
+    preview,
+    previewCode,
+    confirmRedemption,
+    clearPreview,
+  } = useRedemption({
+    onSuccess: (outcome) => {
+      if (typeof outcome === 'number' || outcome.outcome_type === 'balance') {
+        void fetchUser()
+        return
+      }
+      setSubscriptionRefreshVersion((version) => version + 1)
+    },
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -106,7 +116,6 @@ export function Wallet(props: WalletProps) {
     const success = await confirmRedemption(redemptionCode.trim())
     if (success) {
       setRedemptionCode('')
-      await fetchUser()
     }
   }
 
@@ -141,7 +150,9 @@ export function Wallet(props: WalletProps) {
               </div>
 
               <div className='min-w-0'>
-                <SubscriptionPlansCard />
+                <SubscriptionPlansCard
+                  refreshVersion={subscriptionRefreshVersion}
+                />
               </div>
             </div>
 

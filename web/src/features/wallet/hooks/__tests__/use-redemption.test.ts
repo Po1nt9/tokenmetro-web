@@ -199,6 +199,33 @@ describe('wallet redemption outcomes', () => {
     expect(getSelf).not.toHaveBeenCalled()
   })
 
+  test('reports the successful outcome so the wallet can refresh the matching data', async () => {
+    const onSuccess = vi.fn()
+    const subscriptionOutcome = {
+      outcome_type: 'subscription' as const,
+      subscription: {
+        id: 42,
+        plan_id: 7,
+        amount_total: 1200,
+        end_time: 1_800_000_000,
+      },
+    }
+    vi.mocked(previewRedemptionCode).mockResolvedValue({
+      success: true,
+      data: { outcome_type: 'subscription' },
+    })
+    vi.mocked(redeemTopupCode).mockResolvedValue({
+      success: true,
+      data: subscriptionOutcome,
+    })
+    const { result } = renderHook(() => useRedemption({ onSuccess }))
+
+    await act(async () => result.current.previewCode('SUBSCRIPTION'))
+    await act(async () => result.current.confirmRedemption('SUBSCRIPTION'))
+
+    expect(onSuccess).toHaveBeenCalledWith(subscriptionOutcome)
+  })
+
   test('keeps legacy numeric balance redemption responses compatible', async () => {
     vi.mocked(redeemTopupCode).mockResolvedValue({ success: true, data: 250 })
     vi.mocked(previewRedemptionCode).mockResolvedValue({

@@ -46,7 +46,9 @@ function getRedemptionSuccessMessage(data: RedemptionOutcome | number): string {
   return i18next.t('Subscription redemption successful')
 }
 
-export function useRedemption() {
+export function useRedemption(options?: {
+  onSuccess?: (outcome: RedemptionOutcome | number) => void
+}) {
   const [redeeming, setRedeeming] = useState(false)
   const [confirmingRedemption, setConfirmingRedemption] = useState(false)
   const [preview, setPreview] = useState<RedemptionPreview | null>(null)
@@ -94,6 +96,7 @@ export function useRedemption() {
         const response = await redeemTopupCode({ key: code })
         if (response.success && response.data) {
           toast.success(getRedemptionSuccessMessage(response.data))
+          options?.onSuccess?.(response.data)
           return true
         }
         handleServerError(response, i18next.t('Redemption failed'))
@@ -108,7 +111,7 @@ export function useRedemption() {
         }
       }
     },
-    [preview]
+    [options, preview]
   )
 
   const clearPreview = useCallback(() => {
