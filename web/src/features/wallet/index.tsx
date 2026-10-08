@@ -25,7 +25,6 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
-import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
@@ -40,20 +39,13 @@ export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
-  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(
     !!props.initialShowHistory
   )
   const [redemptionCode, setRedemptionCode] = useState('')
-  const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
 
   const { topupInfo, loading: topupLoading } = useTopupInfo()
-  const {
-    affiliateLink,
-    loading: affiliateLoading,
-    transferQuota,
-    transferring,
-  } = useAffiliate()
+  const { affiliateLink, loading: affiliateLoading } = useAffiliate()
   const {
     redeeming,
     confirmingRedemption,
@@ -63,7 +55,6 @@ export function Wallet(props: WalletProps) {
     clearPreview,
   } = useRedemption()
 
-  // Fetch and refresh user data
   const fetchUser = useCallback(async () => {
     try {
       setUserLoading(true)
@@ -106,13 +97,13 @@ export function Wallet(props: WalletProps) {
   }, [props.initialShowHistory])
 
   const handleRedeem = async () => {
-    if (!redemptionCode) return
-    await previewCode(redemptionCode)
+    if (!redemptionCode.trim()) return
+    await previewCode(redemptionCode.trim())
   }
 
   const handleConfirmRedemption = async () => {
-    if (!redemptionCode || !preview) return
-    const success = await confirmRedemption(redemptionCode)
+    if (!redemptionCode.trim() || !preview) return
+    const success = await confirmRedemption(redemptionCode.trim())
     if (success) {
       setRedemptionCode('')
       await fetchUser()
@@ -124,38 +115,16 @@ export function Wallet(props: WalletProps) {
     setRedemptionCode(code)
   }
 
-  // Handle transfer
-  const handleTransfer = async (amount: number) => {
-    const success = await transferQuota(amount)
-    if (success) {
-      await fetchUser()
-    }
-    return success
-  }
-
-  const handleSubscriptionAvailabilityChange = useCallback(
-    (available: boolean) => {
-      setShowSubscriptionPanel(available)
-    },
-    []
-  )
-
   return (
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 overflow-hidden sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
 
-            <div
-              className={
-                showSubscriptionPanel
-                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start'
-                  : 'grid gap-4'
-              }
-            >
-              <div id='wallet-add-funds' className='scroll-mt-4'>
+            <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] xl:items-start'>
+              <div id='wallet-add-funds' className='min-w-0 scroll-mt-4'>
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   redemptionCode={redemptionCode}
@@ -171,34 +140,19 @@ export function Wallet(props: WalletProps) {
                 />
               </div>
 
-              <SubscriptionPlansCard
-                topupInfo={topupInfo}
-                onAvailabilityChange={handleSubscriptionAvailabilityChange}
-                userQuota={user?.quota}
-                onPurchaseSuccess={fetchUser}
-              />
+              <div className='min-w-0'>
+                <SubscriptionPlansCard />
+              </div>
             </div>
 
             <AffiliateRewardsCard
               user={user}
               affiliateLink={affiliateLink}
-              onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                topupInfo?.payment_compliance_confirmed !== false
-              }
               loading={affiliateLoading}
             />
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
-
-      <TransferDialog
-        open={transferDialogOpen}
-        onOpenChange={setTransferDialogOpen}
-        onConfirm={handleTransfer}
-        availableQuota={user?.aff_quota ?? 0}
-        transferring={transferring}
-      />
 
       <BillingHistoryDialog
         open={billingDialogOpen}

@@ -102,8 +102,10 @@ export function RechargeFormCard({
 
   return (
     <TitledCard
-      title={t('Add Funds')}
-      description={t('Pick an amount, buy a code, then redeem it here')}
+      title={t('Buy and Redeem')}
+      description={t(
+        'Buy a code from the ChainDong Shop, then preview and confirm it here'
+      )}
       icon={<WalletCards className='h-4 w-4' />}
       iconTone='success'
       disableHoverEffect
@@ -160,7 +162,17 @@ export function RechargeFormCard({
           </div>
 
           <div className='border-t pt-4 sm:pt-5'>
-            <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+            <form
+              className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (preview) {
+                  onConfirmRedemption()
+                } else {
+                  onRedeem()
+                }
+              }}
+            >
               <div className='relative'>
                 {/* 纯装饰的输入框前缀，用静音色：它当区块标记时的琥珀色底是提醒用的，
                     挂到输入框上会变成没有缘由的高饱和色 */}
@@ -176,15 +188,19 @@ export function RechargeFormCard({
                 />
               </div>
               <Button
-                onClick={preview ? onConfirmRedemption : onRedeem}
-                disabled={redeeming || (!!preview && !redemptionCode)}
+                type='submit'
+                disabled={
+                  redeeming ||
+                  confirmingRedemption ||
+                  !redemptionCode.trim()
+                }
                 variant='outline'
                 className='h-9 px-4'
               >
                 {redeeming && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {preview ? t('Confirm redemption') : t('Preview redemption')}
               </Button>
-            </div>
+            </form>
             {preview && (
               <div
                 role='status'

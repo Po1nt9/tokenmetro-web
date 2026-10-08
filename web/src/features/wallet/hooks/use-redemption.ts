@@ -20,7 +20,6 @@ import i18next from 'i18next'
 import { useState, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
-import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -95,7 +94,6 @@ export function useRedemption() {
         const response = await redeemTopupCode({ key: code })
         if (response.success && response.data) {
           toast.success(getRedemptionSuccessMessage(response.data))
-          await getSelf()
           return true
         }
         handleServerError(response, i18next.t('Redemption failed'))

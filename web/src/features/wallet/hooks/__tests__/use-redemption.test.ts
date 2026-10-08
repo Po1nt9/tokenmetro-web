@@ -165,7 +165,7 @@ describe('wallet redemption outcomes', () => {
     expect(toast.success).toHaveBeenCalledWith(
       'Redemption successful! Added: quota:750'
     )
-    expect(getSelf).toHaveBeenCalled()
+    expect(getSelf).not.toHaveBeenCalled()
   })
 
   test('shows subscription activation instead of formatting the outcome object as quota', async () => {
@@ -196,7 +196,7 @@ describe('wallet redemption outcomes', () => {
       'Subscription redemption successful'
     )
     expect(formatQuota).not.toHaveBeenCalled()
-    expect(getSelf).toHaveBeenCalled()
+    expect(getSelf).not.toHaveBeenCalled()
   })
 
   test('keeps legacy numeric balance redemption responses compatible', async () => {

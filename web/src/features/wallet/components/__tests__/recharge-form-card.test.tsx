@@ -108,6 +108,16 @@ describe('redemption code purchases', () => {
     expect(screen.getByRole('button', { name: 'Order History' })).toBeEnabled()
   })
 
+  it('submits the current redemption step with Enter and disables blank submissions', () => {
+    render(<RechargeFormCard {...props} />)
+
+    const input = screen.getByRole('textbox', { name: 'Redemption code' })
+    expect(screen.getByRole('button', { name: 'Preview redemption' })).toBeDisabled()
+    fireEvent.change(input, { target: { value: 'CODE' } })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+
+    expect(props.onRedeem).toHaveBeenCalledOnce()
+  })
   it('forwards code changes, redemption and order history actions', () => {
     render(<RechargeFormCard {...props} redemptionCode='CODE' />)
     fireEvent.change(screen.getByRole('textbox', { name: 'Redemption code' }), {
