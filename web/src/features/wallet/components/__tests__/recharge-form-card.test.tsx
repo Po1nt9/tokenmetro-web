@@ -26,10 +26,25 @@ import { RechargeFormCard } from '../recharge-form-card'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, values?: { amount: number }) =>
-      values ? key.replace('{{amount}}', String(values.amount)) : key,
+    t: (key: string, values?: Record<string, string | number>) => {
+      if (!values) return key
+      return Object.entries(values).reduce(
+        (text, [name, value]) => text.replace(`{{${name}}}`, String(value)),
+        key
+      )
+    },
   }),
 }))
+
+// The preview must show the same formatted amount as the success toast, so the
+// formatter output is wrapped to be unmistakable from the raw quota number.
+vi.mock('@/lib/format', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/format')>()
+  return {
+    ...actual,
+    formatQuota: (value: number) => `FQ(${value})`,
+  }
+})
 
 const config = useSystemConfigStore.getState().config
 const topupInfo: TopupInfo = {
@@ -153,7 +168,10 @@ describe('redemption code purchases', () => {
       />
     )
 
-    expect(screen.getByRole('status')).toHaveTextContent('Monthly Pro')
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Monthly Pro')
+    expect(status).toHaveTextContent('Quota: FQ(1200)')
+    expect(status).not.toHaveTextContent('Quota: 1200')
     expect(
       screen.getByRole('button', { name: 'Confirm redemption' })
     ).toBeEnabled()
@@ -161,6 +179,23 @@ describe('redemption code purchases', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(props.onConfirmRedemption).toHaveBeenCalledOnce()
     expect(props.onCancelPreview).toHaveBeenCalledOnce()
+  })
+
+  it('shows the formatted amount for a balance preview', () => {
+    render(
+      <RechargeFormCard
+        {...props}
+        redemptionCode='TEST-CODE'
+        preview={{
+          outcome_type: 'balance',
+          wallet_quota: 750,
+        }}
+      />
+    )
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Wallet balance will increase by FQ(750)')
+    expect(status).not.toHaveTextContent('Wallet balance will increase by 750')
   })
 
   it('localizes fixed subscription duration and reset periods', () => {

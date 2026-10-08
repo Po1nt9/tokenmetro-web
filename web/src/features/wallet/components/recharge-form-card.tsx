@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
 import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import { formatQuota } from '@/lib/format'
 
 import type { RedemptionPreview, TopupInfo } from '../types'
 
@@ -208,7 +209,7 @@ export function RechargeFormCard({
                 {preview.outcome_type === 'balance' ? (
                   <p>
                     {t('Wallet balance will increase by {{quota}}', {
-                      quota: preview.wallet_quota ?? 0,
+                      quota: formatQuota(preview.wallet_quota ?? 0),
                     })}
                   </p>
                 ) : (
@@ -230,7 +231,8 @@ export function RechargeFormCard({
                       )}
                     </p>
                     <p>
-                      {t('Quota')}: {preview.subscription?.quota}
+                      {t('Quota')}:{' '}
+                      {formatQuota(preview.subscription?.quota ?? 0)}
                     </p>
                     <p>
                       {t('Reset period')}:{' '}
