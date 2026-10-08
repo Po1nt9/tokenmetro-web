@@ -78,3 +78,51 @@ func TestUpdateOptionValidatesInviteRewardRatio(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1", stored)
 }
+
+// TestUpdateOptionAuditsInviteRewardRatioValue pins which option updates record
+// their new value in the audit trail: only InviteRewardRatio, whose share is a
+// money payout. Every other key keeps the historical "key name only" contract
+// that keeps potentially sensitive values out of the audit table.
+func TestUpdateOptionAuditsInviteRewardRatioValue(t *testing.T) {
+	database := modelManagementDB(t, "sqlite", "")
+	previousRatio := common.InviteRewardRatio
+	previousSystemName := common.SystemName
+	t.Cleanup(func() {
+		common.InviteRewardRatio = previousRatio
+		common.SystemName = previousSystemName
+	})
+
+	updateOption := func(t *testing.T, key string, value any) {
+		t.Helper()
+		var response struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		modelManagementRequest(t, UpdateOption, http.MethodPut, "/api/option/",
+			OptionUpdateRequest{Key: key, Value: value}, &response)
+		require.True(t, response.Success, response.Message)
+	}
+	latestAuditParams := func(t *testing.T) map[string]any {
+		t.Helper()
+		var entry model.AuditLog
+		require.NoError(t, database.Where("action = ?", "option.update").Order("id desc").First(&entry).Error)
+		require.NotNil(t, entry.Other.Op)
+		require.Equal(t, "option.update", entry.Other.Op.Action)
+		encoded, err := common.Marshal(entry.Other.Op.Params)
+		require.NoError(t, err)
+		var params map[string]any
+		require.NoError(t, common.Unmarshal(encoded, &params))
+		return params
+	}
+
+	updateOption(t, "InviteRewardRatio", 0.05)
+	params := latestAuditParams(t)
+	assert.Equal(t, "InviteRewardRatio", params["key"])
+	assert.Equal(t, "0.05", params["value"], "the audit must answer what the ratio was changed to")
+
+	// Every other key stays minimal: the key name only, never the value.
+	updateOption(t, "SystemName", "audited-site")
+	params = latestAuditParams(t)
+	assert.Equal(t, "SystemName", params["key"])
+	assert.NotContains(t, params, "value")
+}

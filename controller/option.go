@@ -505,10 +505,16 @@ func UpdateOption(c *gin.Context) {
 		}
 		return
 	}
-	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
-	recordManageAudit(c, "option.update", map[string]any{
+	// 出于安全考虑默认只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
+	auditParams := map[string]any{
 		"key": option.Key,
-	})
+	}
+	if option.Key == "InviteRewardRatio" {
+		// InviteRewardRatio 不是密钥，且返利比例是钱口径（0.05 表示按充值额的 5% 返利），
+		// 审计必须能回答「改成了什么」，因此只有该键额外记录新值，其它键维持「只记键名」约定。
+		auditParams["value"] = option.Value
+	}
+	recordManageAudit(c, "option.update", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
