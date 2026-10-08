@@ -35,11 +35,11 @@ export interface ApiResponse<T = unknown> {
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export interface RedemptionSubscriptionPreview {
   plan_title: string
-  duration_unit: string
+  duration_unit: 'year' | 'month' | 'day' | 'hour' | 'custom'
   duration_value: number
   custom_seconds?: number
   quota: number
-  reset_period: string
+  reset_period: 'never' | 'daily' | 'weekly' | 'monthly' | 'custom'
   reset_custom_seconds?: number
   upgrade_group?: string
   downgrade_group?: string

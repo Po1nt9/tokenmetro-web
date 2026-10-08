@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
+import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
 
 import type { RedemptionPreview, TopupInfo } from '../types'
 
@@ -190,9 +191,7 @@ export function RechargeFormCard({
               <Button
                 type='submit'
                 disabled={
-                  redeeming ||
-                  confirmingRedemption ||
-                  !redemptionCode.trim()
+                  redeeming || confirmingRedemption || !redemptionCode.trim()
                 }
                 variant='outline'
                 className='h-9 px-4'
@@ -216,14 +215,36 @@ export function RechargeFormCard({
                   <>
                     <p>{preview.subscription?.plan_title}</p>
                     <p>
-                      {t('Validity')}: {preview.subscription?.duration_value}{' '}
-                      {preview.subscription?.duration_unit}
+                      {t('Validity')}:{' '}
+                      {formatDuration(
+                        preview.subscription
+                          ? {
+                              duration_unit: preview.subscription.duration_unit,
+                              duration_value:
+                                preview.subscription.duration_value,
+                              custom_seconds:
+                                preview.subscription.custom_seconds,
+                            }
+                          : {},
+                        t
+                      )}
                     </p>
                     <p>
                       {t('Quota')}: {preview.subscription?.quota}
                     </p>
                     <p>
-                      {t('Reset period')}: {preview.subscription?.reset_period}
+                      {t('Reset period')}:{' '}
+                      {formatResetPeriod(
+                        preview.subscription
+                          ? {
+                              quota_reset_period:
+                                preview.subscription.reset_period,
+                              quota_reset_custom_seconds:
+                                preview.subscription.reset_custom_seconds,
+                            }
+                          : {},
+                        t
+                      )}
                     </p>
                     {(preview.subscription?.upgrade_group ||
                       preview.subscription?.downgrade_group) && (

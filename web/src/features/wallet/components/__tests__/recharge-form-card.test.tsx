@@ -112,7 +112,9 @@ describe('redemption code purchases', () => {
     render(<RechargeFormCard {...props} />)
 
     const input = screen.getByRole('textbox', { name: 'Redemption code' })
-    expect(screen.getByRole('button', { name: 'Preview redemption' })).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Preview redemption' })
+    ).toBeDisabled()
     fireEvent.change(input, { target: { value: 'CODE' } })
     fireEvent.submit(input.closest('form') as HTMLFormElement)
 
@@ -159,6 +161,56 @@ describe('redemption code purchases', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(props.onConfirmRedemption).toHaveBeenCalledOnce()
     expect(props.onCancelPreview).toHaveBeenCalledOnce()
+  })
+
+  it('localizes fixed subscription duration and reset periods', () => {
+    render(
+      <RechargeFormCard
+        {...props}
+        preview={{
+          outcome_type: 'subscription',
+          subscription: {
+            plan_title: 'Monthly Pro',
+            duration_unit: 'month',
+            duration_value: 2,
+            quota: 1200,
+            reset_period: 'monthly',
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('Validity: 2 months')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Reset period: Monthly'
+    )
+    expect(screen.getByRole('status')).not.toHaveTextContent('monthly')
+  })
+
+  it('formats custom subscription duration and reset seconds as readable units', () => {
+    render(
+      <RechargeFormCard
+        {...props}
+        preview={{
+          outcome_type: 'subscription',
+          subscription: {
+            plan_title: 'Custom Pro',
+            duration_unit: 'custom',
+            duration_value: 0,
+            custom_seconds: 172800,
+            quota: 1200,
+            reset_period: 'custom',
+            reset_custom_seconds: 5400,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('Validity: 2 days')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Reset period: 1 hours'
+    )
+    expect(screen.getByRole('status')).not.toHaveTextContent('0 custom')
   })
 
   it('removes the old summary when the user edits the code and cannot confirm that preview', () => {
