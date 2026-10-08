@@ -475,6 +475,7 @@ export function RedemptionsMutateDrawer({
                           <FormControl>
                             <Checkbox
                               className='mt-0.5'
+                              // Inverted on purpose: field is reward_eligible, label reads "not reward-eligible".
                               checked={!field.value}
                               onCheckedChange={(checked) =>
                                 field.onChange(checked !== true)

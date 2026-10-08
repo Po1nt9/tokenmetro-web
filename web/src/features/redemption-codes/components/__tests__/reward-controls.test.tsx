@@ -106,9 +106,14 @@ function renderHarness(redemptions: Redemption[]) {
   )
 }
 
-async function openVoidDialog() {
+async function openRowMenu() {
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  return user
+}
+
+async function openVoidDialog() {
+  const user = await openRowMenu()
   await user.click(
     await screen.findByRole('menuitem', { name: 'Void invitation reward' })
   )
@@ -142,6 +147,40 @@ test('marks not-reward-eligible codes in the list without touching the others', 
   expect(
     within(soldRow as HTMLElement).queryByText('Not reward-eligible')
   ).toBeNull()
+})
+
+test('hides the void reward entry while the code is still unused', async () => {
+  renderHarness([redemption(3, { status: 1 })])
+
+  await openRowMenu()
+  // The menu is open once the always-present delete entry shows up.
+  expect(
+    await screen.findByRole('menuitem', { name: 'Delete' })
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('menuitem', { name: 'Void invitation reward' })
+  ).toBeNull()
+})
+
+test('hides the void reward entry for redeemed codes that earn no reward', async () => {
+  renderHarness([redemption(4, { status: 3, reward_eligible: false })])
+
+  await openRowMenu()
+  expect(
+    await screen.findByRole('menuitem', { name: 'Delete' })
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('menuitem', { name: 'Void invitation reward' })
+  ).toBeNull()
+})
+
+test('shows the void reward entry for redeemed reward-eligible codes', async () => {
+  renderHarness([redemption(5, { status: 3, reward_eligible: true })])
+
+  await openRowMenu()
+  expect(
+    await screen.findByRole('menuitem', { name: 'Void invitation reward' })
+  ).toBeInTheDocument()
 })
 
 test('voids the pending invitation reward of the selected code', async () => {

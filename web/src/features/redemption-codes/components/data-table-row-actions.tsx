@@ -81,6 +81,9 @@ export function DataTableRowActions<TData>({
 
   const canEdit = isEnabled && !isExpired
   const canToggle = !isUsed && !isExpired
+  // A pending invitation reward can only exist for a redeemed, reward-eligible
+  // code; anything else is rejected by the backend.
+  const canVoidReward = isUsed && redemption.reward_eligible !== false
 
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
@@ -125,18 +128,20 @@ export function DataTableRowActions<TData>({
           </DropdownMenuItem>
         )}
         {canToggle && <DropdownMenuSeparator />}
-        <DropdownMenuItem
-          onClick={() => {
-            setCurrentRow(redemption)
-            setOpen('void-reward')
-          }}
-          className='text-destructive focus:text-destructive'
-        >
-          {t('Void invitation reward')}
-          <DropdownMenuShortcut>
-            <Undo2 size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {canVoidReward && (
+          <DropdownMenuItem
+            onClick={() => {
+              setCurrentRow(redemption)
+              setOpen('void-reward')
+            }}
+            className='text-destructive focus:text-destructive'
+          >
+            {t('Void invitation reward')}
+            <DropdownMenuShortcut>
+              <Undo2 size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onClick={() => {
             setCurrentRow(redemption)
