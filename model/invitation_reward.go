@@ -1,6 +1,9 @@
 package model
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
@@ -18,6 +21,11 @@ const (
 // InvitationRewardObservationWindowSeconds is the seven-day (168h) window
 // between a recharge event and its reward settlement.
 const InvitationRewardObservationWindowSeconds int64 = 168 * 60 * 60
+
+// InvitationRewardSettlementBatchSize bounds how many due rewards one scan
+// claims. A pass repeats the scan until a batch comes back short, so the size
+// only caps memory and transaction count per pass.
+const InvitationRewardSettlementBatchSize = 200
 
 // InvitationReward is the ledger row for one invitation reward: one row per
 // recharge event, keyed by the redemption that produced it. RewardQuota is
@@ -69,4 +77,129 @@ func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, invite
 		SettleAfter:  now + InvitationRewardObservationWindowSeconds,
 	}
 	return tx.Create(reward).Error
+}
+
+// InvitationRewardSettlementSummary reports one settlement pass so the system
+// task history shows what moved. Credited counts rows that reached the credited
+// terminal state in this pass; CreditedQuota is the quota those rows added to
+// inviter pools; MissingInviter is the subset of credited rows whose inviter row
+// is gone, which is the only way a credited row moves nothing.
+type InvitationRewardSettlementSummary struct {
+	Credited       int `json:"credited"`
+	CreditedQuota  int `json:"credited_quota"`
+	MissingInviter int `json:"missing_inviter"`
+}
+
+// SettleDueInvitationRewards credits every pending reward whose observation
+// window has closed into its inviter's affiliate pool: aff_quota and
+// aff_history grow, while aff_count is left alone because it counts invited
+// users, not rewards. Each row settles in its own transaction whose first write
+// is the conditional status transition, so replaying a pass or running two
+// instances at once cannot pay a reward twice — SQLite has no row locks
+// (lockForUpdate is a no-op there), so the WHERE clause is the guard. Rows are
+// read in id order in batches of batchSize (default
+// InvitationRewardSettlementBatchSize) until a batch comes back short.
+func SettleDueInvitationRewards(ctx context.Context, now int64, batchSize int) (InvitationRewardSettlementSummary, error) {
+	if batchSize <= 0 {
+		batchSize = InvitationRewardSettlementBatchSize
+	}
+	var summary InvitationRewardSettlementSummary
+	for {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		var due []InvitationReward
+		if err := DB.Where("status = ? AND settle_after <= ?", InvitationRewardStatusPending, now).
+			Order("id asc").
+			Limit(batchSize).
+			Find(&due).Error; err != nil {
+			return summary, err
+		}
+		if len(due) == 0 {
+			return summary, nil
+		}
+		progressed := false
+		for i := range due {
+			if err := ctx.Err(); err != nil {
+				return summary, err
+			}
+			outcome, err := settleInvitationRewardTx(due[i].Id, due[i].InviterId, due[i].RewardQuota, now)
+			if err != nil {
+				return summary, err
+			}
+			if !outcome.credited {
+				// A concurrent runner or an administrator reached the row first.
+				continue
+			}
+			progressed = true
+			summary.Credited++
+			if outcome.missingInviter {
+				// The row still becomes terminal so it is not rescanned every
+				// hour, and the operator gets one line per orphaned reward.
+				summary.MissingInviter++
+				common.SysError(fmt.Sprintf(
+					"invitation reward %d settled with no inviter %d to credit; %d quota stayed uncredited",
+					due[i].Id, due[i].InviterId, due[i].RewardQuota,
+				))
+				continue
+			}
+			summary.CreditedQuota += due[i].RewardQuota
+		}
+		// A full batch with no progress means the rows were taken by someone
+		// else; stop instead of spinning on a backlog another runner is draining.
+		if len(due) < batchSize || !progressed {
+			return summary, nil
+		}
+	}
+}
+
+type invitationRewardSettlementOutcome struct {
+	credited       bool
+	missingInviter bool
+}
+
+// settleInvitationRewardTx moves one pending reward to credited and adds its
+// quota to the inviter's pool in a single transaction. It runs entirely on tx:
+// with the shared single-connection SQLite fixtures a helper that reads the
+// global DB inside this transaction would block until the test times out.
+func settleInvitationRewardTx(rewardId int, inviterId int, rewardQuota int, now int64) (invitationRewardSettlementOutcome, error) {
+	var outcome invitationRewardSettlementOutcome
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		transition := tx.Model(&InvitationReward{}).
+			Where("id = ? AND status = ?", rewardId, InvitationRewardStatusPending).
+			Updates(map[string]any{
+				"status":       InvitationRewardStatusCredited,
+				"settled_time": now,
+			})
+		if transition.Error != nil {
+			return transition.Error
+		}
+		if transition.RowsAffected != 1 {
+			// The row was already settled or voided by another writer.
+			return nil
+		}
+		outcome.credited = true
+
+		credited := tx.Model(&User{}).
+			Where("id = ?", inviterId).
+			Updates(map[string]any{
+				"aff_quota":   gorm.Expr("aff_quota + ?", rewardQuota),
+				"aff_history": gorm.Expr("aff_history + ?", rewardQuota),
+			})
+		if credited.Error != nil {
+			return credited.Error
+		}
+		if credited.RowsAffected > 0 {
+			return nil
+		}
+		// MySQL counts changed rows rather than matched rows, so an update that
+		// changed nothing reports zero even though the inviter exists.
+		var existing int64
+		if err := tx.Model(&User{}).Where("id = ?", inviterId).Count(&existing).Error; err != nil {
+			return err
+		}
+		outcome.missingInviter = existing == 0
+		return nil
+	})
+	return outcome, err
 }
