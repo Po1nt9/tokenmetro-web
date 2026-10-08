@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -173,6 +174,51 @@ func TestSettleDueInvitationRewardsDrainsBatchesAndSumsQuota(t *testing.T) {
 	assert.Zero(t, pending)
 
 	assertAffiliatePool(t, inviterId, 60_000, 60_000)
+}
+
+// TestSettleDueInvitationRewardsContinuesPastAFailingRow proves one broken row
+// cannot hold back the rows behind it. A SQLite trigger aborts the pool credit
+// for a single inviter without any production test hook, which makes the
+// lowest-id row fail while a healthy row follows it.
+func TestSettleDueInvitationRewardsContinuesPastAFailingRow(t *testing.T) {
+	inviterId := setupInvitationRewardFixture(t)
+	inviteeId := createInvitationRewardRedeemer(t, inviterId)
+	brokenInviter := &User{Username: "settlement-broken-inviter", Password: "password", Status: common.UserStatusEnabled, AffCode: common.GetRandomString(4)}
+	require.NoError(t, DB.Create(brokenInviter).Error)
+
+	now := common.GetTimestamp()
+	broken := insertSettlementReward(t, brokenInviter.Id, inviteeId, 10_000, InvitationRewardStatusPending, now-2)
+	healthy := insertSettlementReward(t, inviterId, inviteeId, 20_000, InvitationRewardStatusPending, now-1)
+	require.Less(t, broken.Id, healthy.Id, "the failing row must be the first one scanned")
+
+	trigger := fmt.Sprintf("invitation_reward_fail_%d", broken.Id)
+	require.NoError(t, DB.Exec(fmt.Sprintf(
+		"CREATE TRIGGER %s BEFORE UPDATE OF aff_quota ON users WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'test settlement failure'); END",
+		trigger, brokenInviter.Id,
+	)).Error)
+	t.Cleanup(func() { require.NoError(t, DB.Exec("DROP TRIGGER IF EXISTS "+trigger).Error) })
+
+	summary, err := SettleDueInvitationRewards(context.Background(), now, 0)
+	require.NoError(t, err, "a single row failure must not fail the pass")
+	assert.Equal(t, 1, summary.Failed, "the broken row is counted, not hidden")
+	assert.Equal(t, 1, summary.Credited)
+	assert.Equal(t, 20_000, summary.CreditedQuota)
+
+	var storedBroken InvitationReward
+	require.NoError(t, DB.First(&storedBroken, broken.Id).Error)
+	assert.Equal(t, InvitationRewardStatusPending, storedBroken.Status, "a failed row stays pending for a later pass")
+	assert.Zero(t, storedBroken.SettledTime)
+
+	var storedHealthy InvitationReward
+	require.NoError(t, DB.First(&storedHealthy, healthy.Id).Error)
+	assert.Equal(t, InvitationRewardStatusCredited, storedHealthy.Status)
+	assert.Equal(t, now, storedHealthy.SettledTime)
+
+	assertAffiliatePool(t, inviterId, 20_000, 20_000)
+	var brokenUser User
+	require.NoError(t, DB.First(&brokenUser, brokenInviter.Id).Error)
+	assert.Zero(t, brokenUser.AffQuota, "the failing row must move nothing")
+	assert.Zero(t, brokenUser.AffHistoryQuota)
 }
 
 // TestInvitationRewardSettlementDatabaseMatrix proves the conditional update and

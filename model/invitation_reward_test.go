@@ -146,6 +146,26 @@ func TestRedeemCreatesPendingInvitationRewardFromBalanceCode(t *testing.T) {
 	assert.Equal(t, reward.CreatedTime+168*60*60, reward.SettleAfter, "settlement waits the 168h observation window")
 }
 
+func TestRedeemStoresRewardQuotaExactBeyondInt32(t *testing.T) {
+	// The reward ledger columns are bigint and a basis is wallet-scale, so a
+	// reward legitimately exceeds the single-request int32 boundary. 100e9 *
+	// 0.05 = 5e9 exactly; a saturating int32 conversion would silently store
+	// 2147483647 instead.
+	inviterId := setupInvitationRewardFixture(t)
+	enableInviteRewardRatio(t, "0.05")
+	inviteeId := createInvitationRewardRedeemer(t, inviterId)
+	redemption := insertInvitationRewardRedemption(t, 100_000_000_000, true)
+
+	result, err := Redeem(redemption.Key, inviteeId)
+	require.NoError(t, err)
+	assert.Equal(t, 100_000_000_000, result.WalletQuota)
+
+	var reward InvitationReward
+	require.NoError(t, DB.First(&reward, "redemption_id = ?", redemption.Id).Error)
+	assert.Equal(t, 100_000_000_000, reward.BasisQuota)
+	assert.Equal(t, 5_000_000_000, reward.RewardQuota, "a wallet-scale reward must not saturate at the int32 boundary")
+}
+
 func TestRedeemCreatesPendingInvitationRewardFromSubscriptionCode(t *testing.T) {
 	// The subscription path reads the database clock inside the redemption
 	// transaction, so it needs a database with more than one connection.

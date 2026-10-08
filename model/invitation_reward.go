@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/shopspring/decimal"
 
 	"gorm.io/gorm"
 )
@@ -53,7 +54,9 @@ type InvitationReward struct {
 // marked as not earning rewards, or the reward basis is not positive (a
 // zero-price plan is a recharge worth no reward). planPrice is only consulted
 // for subscription redemptions, whose reward basis is the plan price at the
-// site's quota rate.
+// site's quota rate. The reward quota is converted on the wallet scale
+// (bigint columns, JavaScript-safe bound) and an out-of-range product fails the
+// redemption transaction instead of being silently saturated.
 func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, inviterId int, inviteeId int, planPrice float64, now int64) error {
 	ratio := common.InviteRewardRatio
 	if inviterId == 0 || ratio <= 0 || !redemption.RewardEligible {
@@ -70,13 +73,26 @@ func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, invite
 	if basisQuota <= 0 {
 		return nil
 	}
+	// The reward is wallet-scale: basis_quota and reward_quota are bigint, and a
+	// basis can be as large as common.MaxWalletQuota. The ratio is validated
+	// server-side to 0..1 and the basis never exceeds the wallet bound, so this
+	// decimal product cannot leave the wallet domain in theory; keep the strict
+	// conversion anyway, because if an oversized value ever reaches here, failing
+	// the redemption transaction is better than silently recording a smaller
+	// reward (the same rule the redemption wallet path follows).
+	rewardQuota, err := common.WalletQuotaFromDecimalStrict(
+		decimal.NewFromInt(int64(basisQuota)).Mul(decimal.NewFromFloat(ratio)),
+	)
+	if err != nil {
+		return err
+	}
 	reward := &InvitationReward{
 		RedemptionId: redemption.Id,
 		InviterId:    inviterId,
 		InviteeId:    inviteeId,
 		BasisQuota:   basisQuota,
 		Ratio:        ratio,
-		RewardQuota:  common.QuotaFromFloat(float64(basisQuota) * ratio),
+		RewardQuota:  rewardQuota,
 		Status:       InvitationRewardStatusPending,
 		CreatedTime:  now,
 		SettleAfter:  now + InvitationRewardObservationWindowSeconds,
@@ -88,11 +104,16 @@ func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, invite
 // task history shows what moved. Credited counts rows that reached the credited
 // terminal state in this pass; CreditedQuota is the quota those rows added to
 // inviter pools; MissingInviter is the subset of credited rows whose inviter row
-// is gone, which is the only way a credited row moves nothing.
+// is gone, which is the only way a credited row moves nothing. Failed counts
+// settlement attempts that errored: the row stays pending for a later pass, and
+// because a failed row is still due it may be retried (and counted again) by a
+// later batch round of the same pass. A failed row never blocks the other rows
+// in the same pass.
 type InvitationRewardSettlementSummary struct {
 	Credited       int `json:"credited"`
 	CreditedQuota  int `json:"credited_quota"`
 	MissingInviter int `json:"missing_inviter"`
+	Failed         int `json:"failed"`
 }
 
 // SettleDueInvitationRewards credits every pending reward whose observation
@@ -104,6 +125,13 @@ type InvitationRewardSettlementSummary struct {
 // (lockForUpdate is a no-op there), so the WHERE clause is the guard. Rows are
 // read in id order in batches of batchSize (default
 // InvitationRewardSettlementBatchSize) until a batch comes back short.
+//
+// A row whose own transaction fails is counted in the summary, logged, and
+// skipped: it stays pending for a later pass instead of blocking every reward
+// behind it (the batch scan restarts from the lowest pending id each round, so
+// one permanently broken row must not pin the head of the queue). A failed row
+// is still due, so a later batch round of the same pass may retry it. Only a
+// failed scan (or a cancelled context) fails the whole pass.
 func SettleDueInvitationRewards(ctx context.Context, now int64, batchSize int) (InvitationRewardSettlementSummary, error) {
 	if batchSize <= 0 {
 		batchSize = InvitationRewardSettlementBatchSize
@@ -130,7 +158,14 @@ func SettleDueInvitationRewards(ctx context.Context, now int64, batchSize int) (
 			}
 			outcome, err := settleInvitationRewardTx(due[i].Id, due[i].InviterId, due[i].RewardQuota, now)
 			if err != nil {
-				return summary, err
+				// Tolerate one bad row: its transaction rolled back, so it is
+				// still pending and a later pass retries it, while every row
+				// behind it settles in this pass.
+				summary.Failed++
+				common.SysError(fmt.Sprintf(
+					"invitation reward %d settlement failed: %v", due[i].Id, err,
+				))
+				continue
 			}
 			if !outcome.credited {
 				// A concurrent runner or an administrator reached the row first.
