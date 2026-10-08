@@ -49,9 +49,11 @@ type InvitationReward struct {
 // createPendingInvitationRewardTx writes the pending ledger row for a
 // successful sold-code redemption. It runs inside the redemption transaction so
 // a redemption can never commit without its reward row, and it writes nothing
-// when the invitee has no inviter, rewards are disabled, or the code's batch is
-// marked as not earning rewards. planPrice is only consulted for subscription
-// redemptions, whose reward basis is the plan price at the site's quota rate.
+// when the invitee has no inviter, rewards are disabled, the code's batch is
+// marked as not earning rewards, or the reward basis is not positive (a
+// zero-price plan is a recharge worth no reward). planPrice is only consulted
+// for subscription redemptions, whose reward basis is the plan price at the
+// site's quota rate.
 func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, inviterId int, inviteeId int, planPrice float64, now int64) error {
 	ratio := common.InviteRewardRatio
 	if inviterId == 0 || ratio <= 0 || !redemption.RewardEligible {
@@ -64,6 +66,9 @@ func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, invite
 		if err != nil {
 			return err
 		}
+	}
+	if basisQuota <= 0 {
+		return nil
 	}
 	reward := &InvitationReward{
 		RedemptionId: redemption.Id,

@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"sort"
@@ -204,6 +205,14 @@ func UpdateOption(c *gin.Context) {
 	case "QuotaForInviter", "QuotaForInvitee":
 		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
 			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+			return
+		}
+	case "InviteRewardRatio":
+		// Stored as a decimal share (0.05 = 5%); out-of-range values would turn
+		// into a payout multiple of the recharge face value.
+		ratio, parseErr := strconv.ParseFloat(strings.TrimSpace(option.Value.(string)), 64)
+		if parseErr != nil || math.IsNaN(ratio) || ratio < 0 || ratio > 1 {
+			common.ApiErrorMsg(c, fmt.Sprintf("邀请返利比例必须是 0 到 1 之间的小数（0.05 表示 5%%），当前值：%s", option.Value))
 			return
 		}
 	default:

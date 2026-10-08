@@ -26,6 +26,32 @@ func enableInviteRewardRatio(t *testing.T, value string) {
 	})
 }
 
+// useMultiConnectionSQLiteFixture swaps the package database for an in-memory
+// SQLite database with more than one connection. The subscription redemption
+// path reads the database clock inside its transaction, which would wait for
+// the connection the open transaction holds on the shared single-connection
+// fixture. Call it before setupInvitationRewardFixture.
+func useMultiConnectionSQLiteFixture(t *testing.T) {
+	t.Helper()
+	previousDB, previousLogDB := DB, LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	initCol()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	DB, LOG_DB = db, db
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	t.Cleanup(func() {
+		DB, LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		initCol()
+		_ = sqlDB.Close()
+	})
+}
+
 // setupInvitationRewardFixture resets the reward-related tables and creates the
 // inviter. Redeemers are created per case so tests can run with or without an
 // invitation link.
@@ -123,24 +149,7 @@ func TestRedeemCreatesPendingInvitationRewardFromBalanceCode(t *testing.T) {
 func TestRedeemCreatesPendingInvitationRewardFromSubscriptionCode(t *testing.T) {
 	// The subscription path reads the database clock inside the redemption
 	// transaction, so it needs a database with more than one connection.
-	previousDB, previousLogDB := DB, LOG_DB
-	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	initCol()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	DB, LOG_DB = db, db
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(4)
-	t.Cleanup(func() {
-		DB, LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousMain, previousLog)
-		initCol()
-		_ = sqlDB.Close()
-	})
-
+	useMultiConnectionSQLiteFixture(t)
 	inviterId := setupInvitationRewardFixture(t)
 	enableInviteRewardRatio(t, "0.05")
 	inviteeId := createInvitationRewardRedeemer(t, inviterId)
@@ -170,6 +179,32 @@ func TestRedeemCreatesPendingInvitationRewardFromSubscriptionCode(t *testing.T) 
 	var user User
 	require.NoError(t, DB.First(&user, inviteeId).Error)
 	assert.Zero(t, user.Quota, "subscription redemptions must not touch wallet balance")
+}
+
+func TestRedeemSkipsInvitationRewardWhenRewardBasisIsZero(t *testing.T) {
+	// A zero-price subscription plan still delivers its entitlement, but its
+	// reward basis is zero, so it must not leave a pending "0 面额 / 0 返利" row
+	// in the inviter's detail list.
+	useMultiConnectionSQLiteFixture(t)
+	inviterId := setupInvitationRewardFixture(t)
+	enableInviteRewardRatio(t, "0.05")
+	inviteeId := createInvitationRewardRedeemer(t, inviterId)
+	plan := &SubscriptionPlan{
+		Title: "Zero price plan", Enabled: true, DurationUnit: SubscriptionDurationMonth,
+		DurationValue: 1, PriceAmount: 0, TotalAmount: 1_000_000, QuotaResetPeriod: SubscriptionResetNever,
+	}
+	require.NoError(t, DB.Create(plan).Error)
+	InvalidateSubscriptionPlanCache(plan.Id)
+	redemption := insertInvitationRewardRedemption(t, 100, true)
+	require.NoError(t, DB.Model(&Redemption{}).Where("id = ?", redemption.Id).Updates(map[string]any{
+		"outcome_type":         RedemptionOutcomeSubscription,
+		"subscription_plan_id": plan.Id,
+	}).Error)
+
+	result, err := Redeem(redemption.Key, inviteeId)
+	require.NoError(t, err)
+	assert.Equal(t, RedemptionOutcomeSubscription, result.OutcomeType)
+	assertInvitationRewardCount(t, redemption.Id, 0)
 }
 
 func TestRedeemKeepsSingleInvitationRewardOnRepeatAndConcurrentAttempts(t *testing.T) {
