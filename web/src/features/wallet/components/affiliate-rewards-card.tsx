@@ -73,7 +73,10 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         <div className='grid grid-cols-3 gap-1.5 text-center'>
           {[
             [t('Pending'), formatQuota(props.user?.aff_quota ?? 0)],
-            [t('Total Earned'), formatQuota(props.user?.aff_history_quota ?? 0)],
+            [
+              t('Total Earned'),
+              formatQuota(props.user?.aff_history_quota ?? 0),
+            ],
             [t('Invites'), String(props.user?.aff_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>
@@ -105,7 +108,9 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         </div>
         <p className='text-muted-foreground text-xs lg:col-span-3'>
           {hasRewards
-            ? t('Automatic referral rewards are not enabled yet; pending rewards remain read-only.')
+            ? t(
+                'Automatic referral rewards are not enabled yet; pending rewards remain read-only.'
+              )
             : t('Automatic referral rewards are not enabled yet.')}
         </p>
       </CardContent>

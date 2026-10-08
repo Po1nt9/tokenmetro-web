@@ -63,6 +63,8 @@ describe('affiliate rewards card', () => {
         'Automatic referral rewards are not enabled yet; pending rewards remain read-only.'
       )
     ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Transfer to Balance' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Transfer to Balance' })
+    ).not.toBeInTheDocument()
   })
 })
