@@ -22,6 +22,27 @@ import dayjs from '@/lib/dayjs'
 
 import type { SubscriptionPlan } from '../types'
 
+function formatCustomSeconds(seconds: number, t: TFunction): string {
+  const units = [
+    { seconds: 86400, singular: 'day', plural: 'days' },
+    { seconds: 3600, singular: 'hour', plural: 'hours' },
+    { seconds: 60, singular: 'minute', plural: 'minutes' },
+    { seconds: 1, singular: 'second', plural: 'seconds' },
+  ]
+  let remainder = seconds
+  const parts: string[] = []
+
+  for (const unit of units) {
+    const value = Math.floor(remainder / unit.seconds)
+    if (value > 0) {
+      parts.push(`${value} ${t(value === 1 ? unit.singular : unit.plural)}`)
+      remainder %= unit.seconds
+    }
+  }
+
+  return parts.join(' ') || `0 ${t('seconds')}`
+}
+
 export function formatDuration(
   plan: Partial<SubscriptionPlan>,
   t: TFunction
@@ -36,10 +57,7 @@ export function formatDuration(
     custom: t('Custom (seconds)'),
   }
   if (unit === 'custom') {
-    const seconds = plan?.custom_seconds || 0
-    if (seconds >= 86400) return `${Math.floor(seconds / 86400)} ${t('days')}`
-    if (seconds >= 3600) return `${Math.floor(seconds / 3600)} ${t('hours')}`
-    return `${seconds} ${t('seconds')}`
+    return formatCustomSeconds(plan?.custom_seconds || 0, t)
   }
   return `${value} ${unitLabels[unit] || unit}`
 }
@@ -54,10 +72,7 @@ export function formatResetPeriod(
   if (period === 'monthly') return t('Monthly')
   if (period === 'custom') {
     const seconds = Number(plan?.quota_reset_custom_seconds || 0)
-    if (seconds >= 86400) return `${Math.floor(seconds / 86400)} ${t('days')}`
-    if (seconds >= 3600) return `${Math.floor(seconds / 3600)} ${t('hours')}`
-    if (seconds >= 60) return `${Math.floor(seconds / 60)} ${t('minutes')}`
-    return `${seconds} ${t('seconds')}`
+    return formatCustomSeconds(seconds, t)
   }
   return t('No Reset')
 }

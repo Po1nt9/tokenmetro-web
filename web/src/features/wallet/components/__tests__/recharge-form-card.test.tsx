@@ -187,7 +187,7 @@ describe('redemption code purchases', () => {
     expect(screen.getByRole('status')).not.toHaveTextContent('monthly')
   })
 
-  it('formats custom subscription duration and reset seconds as readable units', () => {
+  it('formats custom subscription duration and reset seconds without losing remainder', () => {
     render(
       <RechargeFormCard
         {...props}
@@ -208,7 +208,7 @@ describe('redemption code purchases', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Validity: 2 days')
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Reset period: 1 hours'
+      'Reset period: 1 hour 30 minutes'
     )
     expect(screen.getByRole('status')).not.toHaveTextContent('0 custom')
   })
