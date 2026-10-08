@@ -461,6 +461,24 @@ func GetAffCode(c *gin.Context) {
 	return
 }
 
+// GetAffiliateRewards returns the logged-in user's own invitation reward
+// ledger (newest first, capped) plus the quota still pending settlement. The
+// inviter id always comes from the authenticated session, never a parameter,
+// so one user can never read another user's rewards.
+func GetAffiliateRewards(c *gin.Context) {
+	overview, err := model.GetAffiliateRewardOverview(c.GetInt("id"), model.AffiliateRewardListLimit)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    overview,
+	})
+	return
+}
+
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")

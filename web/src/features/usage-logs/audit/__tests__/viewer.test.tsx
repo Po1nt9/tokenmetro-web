@@ -131,6 +131,23 @@ it.each([
     'View API token keys in batch',
     'Requested: 4 · Returned: 0',
   ],
+  [
+    'redemption.reward_eligible_update',
+    {
+      redemption_id: 11,
+      name: 'granted batch',
+      reward_eligible: false,
+      from: true,
+    },
+    'Set invitation reward eligibility of redemption code 11 to false',
+    '',
+  ],
+  [
+    'redemption.reward_void',
+    { redemption_id: 11 },
+    'Voided the pending invitation reward of redemption code 11',
+    '',
+  ],
 ])(
   'shows the target and business outcome for %s directly in the event cell',
   async (action, params, headline, outcome) => {

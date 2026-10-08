@@ -47,7 +47,12 @@ export function Wallet(props: WalletProps) {
     useState(0)
 
   const { topupInfo, loading: topupLoading } = useTopupInfo()
-  const { affiliateLink, loading: affiliateLoading } = useAffiliate()
+  const {
+    affiliateLink,
+    loading: affiliateLoading,
+    transferring,
+    transferQuota,
+  } = useAffiliate()
   const fetchUser = useCallback(async () => {
     try {
       setUserLoading(true)
@@ -124,6 +129,19 @@ export function Wallet(props: WalletProps) {
     setRedemptionCode(code)
   }
 
+  // After a transfer the reward pool shrinks and the wallet balance grows, so
+  // the card figures and the stats card must both be refetched.
+  const handleTransferRewards = useCallback(
+    async (quota: number) => {
+      const success = await transferQuota(quota)
+      if (success) {
+        await fetchUser()
+      }
+      return success
+    },
+    [transferQuota, fetchUser]
+  )
+
   return (
     <>
       <SectionPageLayout>
@@ -160,6 +178,8 @@ export function Wallet(props: WalletProps) {
               user={user}
               affiliateLink={affiliateLink}
               loading={affiliateLoading}
+              transferring={transferring}
+              onTransfer={handleTransferRewards}
             />
           </div>
         </SectionPageLayout.Content>

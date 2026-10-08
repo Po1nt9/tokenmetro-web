@@ -32,6 +32,7 @@ import type {
   StripePaymentResponse,
   AffiliateCodeResponse,
   AffiliateTransferResponse,
+  AffiliateRewardsResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
@@ -206,6 +207,14 @@ export async function transferAffiliateQuota(
   request: AffiliateTransferRequest
 ): Promise<AffiliateTransferResponse> {
   const res = await api.post('/api/user/aff_transfer', request)
+  return res.data
+}
+
+/**
+ * Get the signed-in user's own invitation reward ledger
+ */
+export async function getAffiliateRewards(): Promise<AffiliateRewardsResponse> {
+  const res = await api.get('/api/user/aff/rewards')
   return res.data
 }
 

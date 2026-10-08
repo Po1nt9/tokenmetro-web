@@ -535,6 +535,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'redemption.update': 'Updated a redemption code',
   'redemption.delete': 'Deleted a redemption code',
   'redemption.delete_invalid': 'Deleted invalid redemption codes',
+  'redemption.reward_eligible_update':
+    'Set invitation reward eligibility of redemption code {{redemption_id}} to {{reward_eligible}}',
+  'redemption.reward_void':
+    'Voided the pending invitation reward of redemption code {{redemption_id}}',
   // Prefill groups
   'prefill_group.create': 'Created a prefill group',
   'prefill_group.update': 'Updated a prefill group',

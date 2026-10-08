@@ -78,6 +78,7 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
+export type AffiliateRewardsResponse = ApiResponse<AffiliateRewardOverview>
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -258,6 +259,42 @@ export interface AffiliateTransferRequest {
 }
 
 /**
+ * Terminal or in-flight state of one invitation reward ledger row:
+ * pending (observation window open), credited (settled into the reward
+ * balance) or voided (refunded, never settled).
+ */
+export type AffiliateRewardStatus = 'pending' | 'credited' | 'voided'
+
+/**
+ * One invitation reward row earned by the signed-in inviter.
+ */
+export interface AffiliateRewardEntry {
+  /** Ledger row ID */
+  id: number
+  /** Recharge time (unix seconds) */
+  created_time: number
+  /** Invitee username; empty when the invitee account was removed */
+  invitee_username: string
+  /** Reward basis (the redeemed code's face value) in quota units */
+  basis_quota: number
+  /** Reward amount in quota units */
+  reward_quota: number
+  /** Current ledger status */
+  status: AffiliateRewardStatus
+}
+
+/**
+ * The signed-in inviter's own reward ledger: the quota still inside the
+ * observation window plus the most recent rows.
+ */
+export interface AffiliateRewardOverview {
+  /** Sum of every pending row, not just the listed ones */
+  pending_quota: number
+  /** Most recent ledger rows, newest first */
+  rewards: AffiliateRewardEntry[]
+}
+
+/**
  * User wallet data
  */
 export interface UserWalletData {
@@ -271,9 +308,9 @@ export interface UserWalletData {
   used_quota: number
   /** Total request count */
   request_count: number
-  /** Affiliate quota (pending rewards) */
+  /** Reward balance settled and not yet transferred to the wallet */
   aff_quota: number
-  /** Total affiliate quota earned (historical) */
+  /** Total affiliate quota ever settled into the reward balance */
   aff_history_quota: number
   /** Number of successful affiliate invites */
   aff_count: number
