@@ -356,6 +356,16 @@ export function SubscriptionPlansCard(props: SubscriptionPlansCardProps) {
             ? t('Buy subscription entitlements from the ChainDong Shop and redeem the code above.')
             : t('No subscription plans are currently published.')}
         </p>
+        {plans.length > 0 && (
+            <a
+              href='https://wzyp.cn/'
+              target='_blank'
+              rel='noopener noreferrer'
+              className='text-primary mt-2 inline-flex min-h-10 items-center text-sm underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+            >
+              {t('Browse subscription codes at the ChainDong Shop')}
+            </a>
+        )}
         <p className='text-muted-foreground mt-2'>
           {t('Subscription entitlements are never merged into wallet balance.')}
         </p>
