@@ -530,6 +530,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   // Redemption codes
   'redemption.create':
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',
+  'redemption.create_subscription':
+    'Created {{count}} subscription redemption codes named {{name}} (plan: {{plan}})',
   'redemption.update': 'Updated a redemption code',
   'redemption.delete': 'Deleted a redemption code',
   'redemption.delete_invalid': 'Deleted invalid redemption codes',

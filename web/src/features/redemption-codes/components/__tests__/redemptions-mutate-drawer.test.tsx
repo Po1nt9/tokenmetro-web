@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -98,7 +99,7 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
-function drawerTree(currentRow: Redemption) {
+function drawerTree(currentRow?: Redemption) {
   return (
     <I18nextProvider i18n={i18n}>
       <RedemptionsProvider>
@@ -114,7 +115,7 @@ function drawerTree(currentRow: Redemption) {
 }
 
 async function renderDrawer(
-  currentRow: Redemption,
+  currentRow?: Redemption,
   currency: CurrencyFixture = {
     quotaDisplayType: 'USD',
     usdExchangeRate: 1,
@@ -386,5 +387,103 @@ describe('redemption drawer', () => {
 
     expect(updates[0]?.id).toBe(2)
     expect(updates[0]?.quota).toBe(1000001)
+  })
+
+  test('drops stale plan options when the plans request fails after a successful load', async () => {
+    const original = redemption(1)
+    let planRequests = 0
+    Reflect.set(console, 'log', () => undefined)
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        planRequests += 1
+        if (planRequests === 1) {
+          return {
+            data: {
+              success: true,
+              data: [
+                { plan: { id: 42, title: 'Monthly access', enabled: true } },
+              ],
+            },
+          }
+        }
+        return { data: { success: false, message: 'plans unavailable' } }
+      }
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Monthly access' })
+    )
+
+    await act(() => i18n.changeLanguage('zh'))
+    await waitFor(() => expect(planRequests).toBe(2))
+    await waitFor(() =>
+      expect(document.body).toHaveTextContent('plans unavailable')
+    )
+    // The language change also re-runs the record-load effect, which resets the
+    // form back to the stored balance outcome; wait for that reset before
+    // selecting the subscription outcome again.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('combobox', { name: 'Subscription plan' })
+      ).not.toBeInTheDocument()
+    )
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+
+    await act(() => i18n.changeLanguage('en'))
+  })
+
+  test('blocks a zero-quota balance batch with a field error and no create request', async () => {
+    const creates: unknown[] = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+
+    changeInput(getControlByLabel('Quota (USD)'), '0')
+    submitForm()
+
+    await waitFor(() =>
+      expect(getControlByLabel('Quota (USD)')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    )
+    expect(
+      await screen.findByText('Quota must be greater than zero')
+    ).toBeInTheDocument()
+    expect(creates).toEqual([])
   })
 })

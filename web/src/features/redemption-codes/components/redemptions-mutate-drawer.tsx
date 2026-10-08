@@ -116,8 +116,8 @@ export function RedemptionsMutateDrawer({
   const [plans, setPlans] = useState<SubscriptionPlan[]>([])
 
   useEffect(() => {
+    setPlans([])
     if (!open) {
-      setPlans([])
       return
     }
     let ignoreResult = false

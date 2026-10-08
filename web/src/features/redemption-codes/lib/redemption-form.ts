@@ -33,21 +33,33 @@ import type { RedemptionFormData, Redemption } from '../types'
 
 export function getRedemptionFormSchema(t: TFunction) {
   const msg = getRedemptionFormErrorMessages(t)
-  return z.object({
-    name: z
-      .string()
-      .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
-      .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
-    outcome_type: z.enum(['balance', 'subscription']),
-    subscription_plan_id: z.number().int().nonnegative(),
-    quota_dollars: z.number().min(0, t('Quota must be a positive number')),
-    expired_time: z.date().optional(),
-    count: z
-      .number()
-      .min(REDEMPTION_VALIDATION.COUNT_MIN, msg.COUNT_INVALID)
-      .max(REDEMPTION_VALIDATION.COUNT_MAX, msg.COUNT_INVALID)
-      .optional(),
-  })
+  return z
+    .object({
+      name: z
+        .string()
+        .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
+        .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
+      outcome_type: z.enum(['balance', 'subscription']),
+      subscription_plan_id: z.number().int().nonnegative(),
+      quota_dollars: z.number().min(0, msg.QUOTA_NON_NEGATIVE),
+      expired_time: z.date().optional(),
+      count: z
+        .number()
+        .min(REDEMPTION_VALIDATION.COUNT_MIN, msg.COUNT_INVALID)
+        .max(REDEMPTION_VALIDATION.COUNT_MAX, msg.COUNT_INVALID)
+        .optional(),
+    })
+    .superRefine((data, ctx) => {
+      // A balance outcome must credit a positive amount; a subscription outcome
+      // carries its value in the plan and submits quota 0.
+      if (data.outcome_type === 'balance' && data.quota_dollars === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['quota_dollars'],
+          message: msg.QUOTA_POSITIVE,
+        })
+      }
+    })
 }
 
 export type RedemptionFormValues = {
