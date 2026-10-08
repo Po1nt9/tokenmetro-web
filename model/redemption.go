@@ -33,9 +33,13 @@ type Redemption struct {
 	UsedUserId         int                   `json:"used_user_id"`
 	// SaleOrderId is nullable because this repository has no linked-shop order fact yet.
 	// A future shop integration may populate its stable order reference without storing code text or inventing sale value.
-	SaleOrderId *string        `json:"sale_order_id,omitempty" gorm:"type:varchar(128);default:null"`
-	DeletedAt   gorm.DeletedAt `gorm:"index"`
-	ExpiredTime int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	SaleOrderId *string `json:"sale_order_id,omitempty" gorm:"type:varchar(128);default:null"`
+	// RewardEligible marks a batch that must not earn invitation rewards (granted,
+	// trial, compensation, or test codes). The column defaults to true so codes
+	// created before the field existed stay reward-eligible.
+	RewardEligible bool           `json:"reward_eligible" gorm:"not null;default:true"`
+	DeletedAt      gorm.DeletedAt `gorm:"index"`
+	ExpiredTime    int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
 
 func (redemption Redemption) EffectiveOutcomeType() RedemptionOutcomeType {
@@ -274,6 +278,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 	var walletQuota int
 	var inviterId int
 	var planTitle string
+	var planPrice float64
 
 	common.RandomSleep()
 	err = DB.Transaction(func(tx *gorm.DB) error {
@@ -305,6 +310,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 				return errors.New("套餐未启用")
 			}
 			planTitle = plan.Title
+			planPrice = plan.PriceAmount
 			// Serialize purchases from different redemption codes for the same user.
 			var userRow User
 			if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
@@ -326,10 +332,11 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 			walletQuota = redemption.Quota
 		}
 
+		now := common.GetTimestamp()
 		updated := tx.Model(&Redemption{}).
 			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
 			Updates(map[string]any{
-				"redeemed_time": common.GetTimestamp(),
+				"redeemed_time": now,
 				"status":        common.RedemptionCodeStatusUsed,
 				"used_user_id":  userId,
 			})
@@ -344,7 +351,7 @@ func Redeem(key string, userId int) (result RedemptionResult, err error) {
 			return err
 		}
 		inviterId = user.InviterId
-		return nil
+		return createPendingInvitationRewardTx(tx, redemption, inviterId, userId, planPrice, now)
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())
@@ -394,7 +401,24 @@ func (redemption *Redemption) Insert() error {
 			return err
 		}
 	}
-	return DB.Create(redemption).Error
+	// reward_eligible defaults to true in the schema so codes created before the
+	// field existed stay reward-eligible; GORM substitutes that default for a zero
+	// bool during Create, so an explicit opt-out is written in the same transaction.
+	if redemption.RewardEligible {
+		return DB.Create(redemption).Error
+	}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(redemption).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Redemption{}).Where("id = ?", redemption.Id).
+			Update("reward_eligible", false).Error
+	})
+	if err != nil {
+		return err
+	}
+	redemption.RewardEligible = false
+	return nil
 }
 
 func (redemption *Redemption) SelectUpdate() error {
@@ -422,7 +446,7 @@ func (redemption *Redemption) Update() error {
 		}
 	}
 	result := DB.Model(redemption).Where("id = ? AND status <> ?", redemption.Id, common.RedemptionCodeStatusUsed).
-		Select("name", "status", "quota", "outcome_type", "subscription_plan_id", "redeemed_time", "expired_time").Updates(redemption)
+		Select("name", "status", "quota", "outcome_type", "subscription_plan_id", "reward_eligible", "redeemed_time", "expired_time").Updates(redemption)
 	if result.Error != nil {
 		return result.Error
 	}
