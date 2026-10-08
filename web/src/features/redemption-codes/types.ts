@@ -38,6 +38,8 @@ export const redemptionSchema = z.object({
   redeemed_time: z.number(),
   expired_time: z.number(), // 0 for never expires
   used_user_id: z.number(),
+  // true (or missing on older payloads): codes from this batch earn invitation rewards
+  reward_eligible: z.boolean().optional().default(true),
 })
 
 export type Redemption = z.infer<typeof redemptionSchema>
@@ -82,6 +84,7 @@ export interface RedemptionFormData {
   outcome_type: 'balance' | 'subscription'
   subscription_plan_id: number
   expired_time: number
+  reward_eligible: boolean
   count?: number // Only for create
   status?: number // Only for status update
 }
@@ -90,4 +93,9 @@ export interface RedemptionFormData {
 // Dialog Types
 // ============================================================================
 
-export type RedemptionsDialogType = 'create' | 'update' | 'delete' | 'view'
+export type RedemptionsDialogType =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'void-reward'
+  | 'view'

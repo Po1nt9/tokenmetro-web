@@ -77,7 +77,16 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       header: t('Name'),
       meta: { mobileTitle: true },
       cell: ({ row }) => (
-        <span className='font-medium'>{row.getValue('name')}</span>
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <span className='font-medium'>{row.getValue('name')}</span>
+          {row.original.reward_eligible === false && (
+            <StatusBadge
+              label={t('Not reward-eligible')}
+              variant='warning'
+              copyable={false}
+            />
+          )}
+        </div>
       ),
       size: 180,
     },

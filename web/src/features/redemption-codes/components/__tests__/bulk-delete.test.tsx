@@ -47,6 +47,7 @@ const codes: Redemption[] = [11, 22, 33].map((id) => ({
   redeemed_time: 0,
   expired_time: 0,
   used_user_id: 0,
+  reward_eligible: true,
 }))
 const columns = [{ accessorKey: 'name' }]
 const clients: QueryClient[] = []

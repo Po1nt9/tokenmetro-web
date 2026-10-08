@@ -124,8 +124,17 @@ export function RedemptionsMobileList(props: RedemptionsMobileListProps) {
           >
             <div className='flex items-start justify-between gap-3'>
               <div className='min-w-0'>
-                <div className='truncate text-sm font-semibold'>
-                  {redemption.name}
+                <div className='flex flex-wrap items-center gap-1.5'>
+                  <span className='truncate text-sm font-semibold'>
+                    {redemption.name}
+                  </span>
+                  {redemption.reward_eligible === false && (
+                    <StatusBadge
+                      label={t('Not reward-eligible')}
+                      variant='warning'
+                      copyable={false}
+                    />
+                  )}
                 </div>
                 <div className='text-muted-foreground text-[11px]'>
                   {t('Redemption Code')}

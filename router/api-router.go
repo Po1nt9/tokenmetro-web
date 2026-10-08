@@ -305,6 +305,7 @@ func SetApiRouter(router *gin.Engine) {
 			redemptionRoute.GET("/:id", controller.GetRedemption)
 			redemptionRoute.POST("/", controller.AddRedemption)
 			redemptionRoute.POST("/batch", controller.DeleteRedemptionBatch)
+			redemptionRoute.POST("/reward/void", controller.VoidRedemptionReward)
 			redemptionRoute.PUT("/", controller.UpdateRedemption)
 			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption)
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)

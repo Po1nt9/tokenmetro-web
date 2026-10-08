@@ -90,7 +90,11 @@ const originalPost = apiClient.post
 const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
-function redemption(id: number, quota = 500001): Redemption {
+function redemption(
+  id: number,
+  quota = 500001,
+  rewardEligible = true
+): Redemption {
   return {
     id,
     user_id: 1,
@@ -104,6 +108,7 @@ function redemption(id: number, quota = 500001): Redemption {
     redeemed_time: 0,
     expired_time: 0,
     used_user_id: 0,
+    reward_eligible: rewardEligible,
   }
 }
 
@@ -503,5 +508,91 @@ describe('redemption drawer', () => {
       await screen.findByText('Quota must be greater than zero')
     ).toBeInTheDocument()
     expect(creates).toEqual([])
+  })
+
+  test('counts a batch as reward-eligible unless the operator opts out', async () => {
+    const creates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Not reward-eligible (granted/trial/compensation batches)',
+      })
+    ).not.toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'sold batch')
+    submitForm()
+
+    await waitFor(() => expect(creates).toHaveLength(1))
+    expect(creates[0]?.reward_eligible).toBe(true)
+  })
+
+  test('sends the not-reward-eligible opt-out for granted batches', async () => {
+    const creates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    const user = userEvent.setup()
+    const optOut = screen.getByRole('checkbox', {
+      name: 'Not reward-eligible (granted/trial/compensation batches)',
+    })
+    await user.click(optOut)
+    expect(optOut).toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'granted batch')
+    submitForm()
+
+    await waitFor(() => expect(creates).toHaveLength(1))
+    expect(creates[0]?.reward_eligible).toBe(false)
+  })
+
+  test('echoes a stored opt-out and keeps it when saving', async () => {
+    const original = redemption(1, 500001, false)
+    const updates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
+    apiClient.put = async (_url, data) => {
+      updates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Not reward-eligible (granted/trial/compensation batches)',
+      })
+    ).toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'renamed')
+    submitForm()
+
+    await waitFor(() => expect(updates).toHaveLength(1))
+    expect(updates[0]?.reward_eligible).toBe(false)
   })
 })

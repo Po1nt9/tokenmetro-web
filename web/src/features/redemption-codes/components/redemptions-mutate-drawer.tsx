@@ -31,6 +31,7 @@ import {
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
   FormControl,
@@ -464,6 +465,39 @@ export function RedemptionsMutateDrawer({
                       )}
                     />
                   )}
+
+                  <FormField
+                    control={form.control}
+                    name='reward_eligible'
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className='flex items-start gap-2.5'>
+                          <FormControl>
+                            <Checkbox
+                              className='mt-0.5'
+                              checked={!field.value}
+                              onCheckedChange={(checked) =>
+                                field.onChange(checked !== true)
+                              }
+                            />
+                          </FormControl>
+                          <div className='grid gap-1.5'>
+                            <FormLabel className='leading-5'>
+                              {t(
+                                'Not reward-eligible (granted/trial/compensation batches)'
+                              )}
+                            </FormLabel>
+                            <FormDescription>
+                              {t(
+                                'Codes in this batch earn no invitation reward when redeemed.'
+                              )}
+                            </FormDescription>
+                          </div>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
                   <FormField
                     control={form.control}

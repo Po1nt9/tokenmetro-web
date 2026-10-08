@@ -15,6 +15,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// redemptionMutationPayload binds the create/update request body. RewardEligible
+// is a pointer so an omitted field keeps the default the column already carries
+// (reward-eligible) instead of opting a batch out by accident.
+type redemptionMutationPayload struct {
+	model.Redemption
+	RewardEligible *bool `json:"reward_eligible"`
+}
+
+// rewardEligibleOrDefault resolves the optional flag: omitted means the batch
+// earns invitation rewards, which is what sold batches want.
+func rewardEligibleOrDefault(payload *redemptionMutationPayload) bool {
+	if payload.RewardEligible == nil {
+		return true
+	}
+	return *payload.RewardEligible
+}
+
 func GetAllRedemptions(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
@@ -68,12 +85,14 @@ func AddRedemption(c *gin.Context) {
 		return
 	}
 
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
+	payload := redemptionMutationPayload{}
+	err := c.ShouldBindJSON(&payload)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	redemption := payload.Redemption
+	rewardEligible := rewardEligibleOrDefault(&payload)
 	if utf8.RuneCountInString(redemption.Name) == 0 || utf8.RuneCountInString(redemption.Name) > 20 {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionNameLength)
 		return
@@ -117,6 +136,7 @@ func AddRedemption(c *gin.Context) {
 			OutcomeType:        redemption.OutcomeType,
 			SubscriptionPlanId: redemption.SubscriptionPlanId,
 			ExpiredTime:        redemption.ExpiredTime,
+			RewardEligible:     rewardEligible,
 		}
 
 		err = cleanRedemption.Insert()
@@ -133,9 +153,10 @@ func AddRedemption(c *gin.Context) {
 	}
 	if redemption.EffectiveOutcomeType() == model.RedemptionOutcomeSubscription {
 		recordManageAudit(c, "redemption.create_subscription", map[string]any{
-			"name":  redemption.Name,
-			"count": redemption.Count,
-			"plan":  planTitle,
+			"name":            redemption.Name,
+			"count":           redemption.Count,
+			"plan":            planTitle,
+			"reward_eligible": rewardEligible,
 		})
 	} else {
 		recordManageAudit(c, "redemption.create", map[string]any{
@@ -144,6 +165,7 @@ func AddRedemption(c *gin.Context) {
 			"quota":                logger.LogQuota(redemption.Quota),
 			"outcome_type":         redemption.EffectiveOutcomeType(),
 			"subscription_plan_id": redemption.SubscriptionPlanId,
+			"reward_eligible":      rewardEligible,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -152,6 +174,30 @@ func AddRedemption(c *gin.Context) {
 		"data":    keys,
 	})
 	return
+}
+
+// VoidRedemptionReward marks the invitation reward produced by one redemption
+// code as voided, which is how an administrator takes back a pending reward
+// after refunding the recharge. It never touches the redemption row itself:
+// a used code stays immutable (model/redemption.go), so the refund bookkeeping
+// lives on the reward ledger. The redeemed user's quota is subtracted through
+// the existing user management endpoint, not here.
+func VoidRedemptionReward(c *gin.Context) {
+	var request struct {
+		RedemptionId int `json:"redemption_id" binding:"required,gt=0"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if err := model.VoidInvitationRewardByRedemptionId(request.RedemptionId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "redemption.reward_void", map[string]any{
+		"redemption_id": request.RedemptionId,
+	})
+	common.ApiSuccess(c, nil)
 }
 
 func DeleteRedemption(c *gin.Context) {
@@ -170,17 +216,19 @@ func DeleteRedemption(c *gin.Context) {
 
 func UpdateRedemption(c *gin.Context) {
 	statusOnly := c.Query("status_only")
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
+	payload := redemptionMutationPayload{}
+	err := c.ShouldBindJSON(&payload)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	redemption := payload.Redemption
 	cleanRedemption, err := model.GetRedemptionById(redemption.Id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	previousRewardEligible := cleanRedemption.RewardEligible
 	if statusOnly == "" {
 		if cleanRedemption.Status == common.RedemptionCodeStatusUsed {
 			common.ApiError(c, errors.New("used redemption outcome is immutable"))
@@ -216,6 +264,9 @@ func UpdateRedemption(c *gin.Context) {
 			cleanRedemption.SubscriptionPlanId = redemption.SubscriptionPlanId
 		}
 		cleanRedemption.ExpiredTime = redemption.ExpiredTime
+		if payload.RewardEligible != nil {
+			cleanRedemption.RewardEligible = *payload.RewardEligible
+		}
 
 	}
 	if statusOnly != "" {
@@ -225,6 +276,14 @@ func UpdateRedemption(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if cleanRedemption.RewardEligible != previousRewardEligible {
+		recordManageAudit(c, "redemption.reward_eligible_update", map[string]any{
+			"redemption_id":   cleanRedemption.Id,
+			"name":            cleanRedemption.Name,
+			"reward_eligible": cleanRedemption.RewardEligible,
+			"from":            previousRewardEligible,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

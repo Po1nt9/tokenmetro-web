@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { Row } from '@tanstack/react-table'
-import { Trash2, Edit, Power, PowerOff } from 'lucide-react'
+import { Trash2, Edit, Power, PowerOff, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -125,6 +125,18 @@ export function DataTableRowActions<TData>({
           </DropdownMenuItem>
         )}
         {canToggle && <DropdownMenuSeparator />}
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(redemption)
+            setOpen('void-reward')
+          }}
+          className='text-destructive focus:text-destructive'
+        >
+          {t('Void invitation reward')}
+          <DropdownMenuShortcut>
+            <Undo2 size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => {
             setCurrentRow(redemption)
