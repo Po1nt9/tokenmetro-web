@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 type affiliateRewardsEnvelope struct {
@@ -167,12 +166,16 @@ func TestAffiliateRewardsEndpointCapsLedgerAtMostRecentRows(t *testing.T) {
 // users table (including its soft-delete column), the pending SUM and the
 // quota column types must behave the same on SQLite, MySQL and PostgreSQL.
 // MySQL/PostgreSQL runs need TEST_MYSQL_DSN / TEST_POSTGRES_DSN pointing at a
-// loopback instance and are skipped otherwise; each run gets its own isolated
-// database so it cannot disturb the suites that require a pristine one.
+// loopback instance and are skipped otherwise; each run reuses the shared
+// modelManagementDB fixture, which creates its own isolated database and logs
+// the connected database version.
 func TestAffiliateRewardsQueryAcrossDialects(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
-		t.Run(dialect, func(t *testing.T) {
-			db := openAffiliateRewardsDialect(t, dialect)
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			if dialect.env != "" && os.Getenv(dialect.env) == "" {
+				t.Skip("set " + dialect.env + " to run this database")
+			}
+			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
 			require.NoError(t, db.AutoMigrate(&model.User{}, &model.InvitationReward{}))
 
 			marker := common.GetRandomString(8)
@@ -200,43 +203,4 @@ func TestAffiliateRewardsQueryAcrossDialects(t *testing.T) {
 			assert.Equal(t, "", byStatus[model.InvitationRewardStatusCredited].InviteeUsername, "a removed invitee leaves no username behind")
 		})
 	}
-}
-
-// openAffiliateRewardsDialect installs one of the three supported databases as
-// the model package's DB for the duration of the test. It reuses the shared
-// isolated-database helper and logs the connected database version so a matrix
-// run leaves evidence of what it actually hit.
-func openAffiliateRewardsDialect(t *testing.T, dialect string) *gorm.DB {
-	t.Helper()
-	var dsn string
-	versionQuery := "SELECT version()"
-	dbType := common.DatabaseTypeSQLite
-	switch dialect {
-	case "sqlite":
-		versionQuery = "SELECT sqlite_version()"
-	case "mysql":
-		dsn = os.Getenv("TEST_MYSQL_DSN")
-		if dsn == "" {
-			t.Skip("TEST_MYSQL_DSN is not configured")
-		}
-		dbType = common.DatabaseTypeMySQL
-	case "postgres":
-		dsn = os.Getenv("TEST_POSTGRES_DSN")
-		if dsn == "" {
-			t.Skip("TEST_POSTGRES_DSN is not configured")
-		}
-		dbType = common.DatabaseTypePostgreSQL
-	}
-	db, _ := newAuditTestDatabase(t, dialect, dsn)
-	var version string
-	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
-	t.Logf("database version: %s", version)
-	previousDB, previousType := model.DB, common.MainDatabaseType()
-	model.DB = db
-	common.SetDatabaseTypes(dbType, dbType)
-	t.Cleanup(func() {
-		model.DB = previousDB
-		common.SetDatabaseTypes(previousType, previousType)
-	})
-	return db
 }
