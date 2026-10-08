@@ -11,19 +11,68 @@ import (
 	"gorm.io/gorm"
 )
 
+type RedemptionOutcomeType string
+
+const (
+	RedemptionOutcomeBalance      RedemptionOutcomeType = "balance"
+	RedemptionOutcomeSubscription RedemptionOutcomeType = "subscription"
+)
+
 type Redemption struct {
-	Id           int            `json:"id"`
-	UserId       int            `json:"user_id"`
-	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
-	Status       int            `json:"status" gorm:"default:1"`
-	Name         string         `json:"name" gorm:"index"`
-	Quota        int            `json:"quota" gorm:"default:100"`
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
-	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
-	Count        int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId   int            `json:"used_user_id"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
-	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	Id                 int                   `json:"id"`
+	UserId             int                   `json:"user_id"`
+	Key                string                `json:"key" gorm:"type:char(32);uniqueIndex"`
+	Status             int                   `json:"status" gorm:"default:1"`
+	Name               string                `json:"name" gorm:"index"`
+	Quota              int                   `json:"quota" gorm:"default:100"`
+	OutcomeType        RedemptionOutcomeType `json:"outcome_type" gorm:"type:varchar(24);not null;default:'balance'"`
+	SubscriptionPlanId int                   `json:"subscription_plan_id" gorm:"not null;default:0;index"`
+	CreatedTime        int64                 `json:"created_time" gorm:"bigint"`
+	RedeemedTime       int64                 `json:"redeemed_time" gorm:"bigint"`
+	Count              int                   `json:"count" gorm:"-:all"` // only for api request
+	UsedUserId         int                   `json:"used_user_id"`
+	DeletedAt          gorm.DeletedAt        `gorm:"index"`
+	ExpiredTime        int64                 `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+}
+
+func (redemption Redemption) EffectiveOutcomeType() RedemptionOutcomeType {
+	if redemption.OutcomeType == "" {
+		return RedemptionOutcomeBalance
+	}
+	return redemption.OutcomeType
+}
+
+func (redemption *Redemption) ValidateOutcome() error {
+	switch redemption.EffectiveOutcomeType() {
+	case RedemptionOutcomeBalance:
+		if redemption.SubscriptionPlanId != 0 {
+			return errors.New("balance redemption cannot reference a subscription plan")
+		}
+	case RedemptionOutcomeSubscription:
+		if redemption.SubscriptionPlanId <= 0 {
+			return errors.New("subscription redemption requires a plan")
+		}
+	default:
+		return errors.New("invalid redemption outcome")
+	}
+	return nil
+}
+
+type RechargeEvent struct {
+	RedemptionId   int                   `json:"redemption_id"`
+	UserId         int                   `json:"user_id"`
+	InviterId      int                   `json:"inviter_id"`
+	OutcomeType    RedemptionOutcomeType `json:"outcome_type"`
+	WalletQuota    int                   `json:"wallet_quota,omitempty"`
+	PlanId         int                   `json:"plan_id,omitempty"`
+	SubscriptionId int                   `json:"subscription_id,omitempty"`
+}
+
+type RedemptionResult struct {
+	OutcomeType   RedemptionOutcomeType `json:"outcome_type"`
+	WalletQuota   int                   `json:"wallet_quota,omitempty"`
+	Subscription  *UserSubscription     `json:"subscription,omitempty"`
+	RechargeEvent RechargeEvent         `json:"recharge_event"`
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -134,14 +183,17 @@ func GetRedemptionById(id int) (*Redemption, error) {
 	return &redemption, err
 }
 
-func Redeem(key string, userId int) (quota int, err error) {
+func Redeem(key string, userId int) (result RedemptionResult, err error) {
 	if key == "" {
-		return 0, errors.New("未提供兑换码")
+		return result, errors.New("未提供兑换码")
 	}
 	if userId == 0 {
-		return 0, errors.New("无效的 user id")
+		return result, errors.New("无效的 user id")
 	}
 	redemption := &Redemption{}
+	var subscription *UserSubscription
+	var walletQuota int
+	var inviterId int
 
 	keyCol := "`key`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -149,8 +201,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 	}
 	common.RandomSleep()
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
-		if err != nil {
+		if err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error; err != nil {
 			return errors.New("无效的兑换码")
 		}
 		if redemption.Status != common.RedemptionCodeStatusEnabled {
@@ -159,43 +210,106 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
 			return errors.New("该兑换码已过期")
 		}
-		// Compare-and-swap on status: only the transaction that flips
-		// enabled -> used may credit quota, so a concurrent redeem of the
-		// same code loses here even without a row lock (e.g. on SQLite).
-		result := tx.Model(&Redemption{}).
+		if redemption.OutcomeType == "" {
+			redemption.OutcomeType = RedemptionOutcomeBalance
+		}
+		if err := redemption.ValidateOutcome(); err != nil {
+			return err
+		}
+		outcome := redemption.EffectiveOutcomeType()
+		if outcome == RedemptionOutcomeSubscription {
+			if redemption.SubscriptionPlanId <= 0 {
+				return errors.New("invalid subscription redemption plan")
+			}
+			var plan SubscriptionPlan
+			if err := tx.Where("id = ?", redemption.SubscriptionPlanId).First(&plan).Error; err != nil {
+				return errors.New("兑换套餐不可用")
+			}
+			if !plan.Enabled {
+				return errors.New("套餐未启用")
+			}
+			plan.NormalizeDefaults()
+			subscription, err = CreateUserSubscriptionFromPlanTx(tx, userId, &plan, "redemption")
+			if err != nil {
+				return err
+			}
+		} else {
+			if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+				return err
+			}
+			if err := creditTopUpQuota(tx, userId, redemption.Quota, nil); err != nil {
+				return err
+			}
+			walletQuota = redemption.Quota
+		}
+
+		updated := tx.Model(&Redemption{}).
 			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
 			Updates(map[string]any{
 				"redeemed_time": common.GetTimestamp(),
 				"status":        common.RedemptionCodeStatusUsed,
 				"used_user_id":  userId,
 			})
-		if result.Error != nil {
-			return result.Error
+		if updated.Error != nil {
+			return updated.Error
 		}
-		if result.RowsAffected == 0 {
+		if updated.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		var user User
+		if err := tx.Select("inviter_id").Where("id = ?", userId).First(&user).Error; err != nil {
+			return err
+		}
+		inviterId = user.InviterId
+		return nil
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())
-		return 0, ErrRedeemFailed
+		return RedemptionResult{}, ErrRedeemFailed
 	}
-	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
-	return redemption.Quota, nil
+
+	outcome := redemption.EffectiveOutcomeType()
+	result = RedemptionResult{
+		OutcomeType:  outcome,
+		WalletQuota:  walletQuota,
+		Subscription: subscription,
+		RechargeEvent: RechargeEvent{
+			RedemptionId: redemption.Id,
+			UserId:       userId,
+			InviterId:    inviterId,
+			OutcomeType:  outcome,
+			WalletQuota:  walletQuota,
+		},
+	}
+	if subscription != nil {
+		result.RechargeEvent.PlanId = subscription.PlanId
+		result.RechargeEvent.SubscriptionId = subscription.Id
+		if subscription.UpgradeGroup != "" {
+			refreshSubscriptionUserGroupCache(userId, "redemption")
+		}
+	} else {
+		syncCreditUserQuotaCache(userId, walletQuota, "redemption")
+		RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(walletQuota), redemption.Id))
+	}
+	return result, nil
 }
 
 func (redemption *Redemption) Insert() error {
-	if redemption.Quota <= 0 {
-		return errors.New("redemption quota must be positive")
+	if redemption.OutcomeType == "" {
+		redemption.OutcomeType = RedemptionOutcomeBalance
 	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+	if err := redemption.ValidateOutcome(); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Create(redemption).Error
-	return err
+	if redemption.EffectiveOutcomeType() == RedemptionOutcomeBalance {
+		if redemption.Quota <= 0 {
+			return errors.New("redemption quota must be positive")
+		}
+		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+			return err
+		}
+	}
+	return DB.Create(redemption).Error
 }
 
 func (redemption *Redemption) SelectUpdate() error {
@@ -205,15 +319,38 @@ func (redemption *Redemption) SelectUpdate() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (redemption *Redemption) Update() error {
-	if redemption.Quota <= 0 {
-		return errors.New("redemption quota must be positive")
+	if redemption.Status == common.RedemptionCodeStatusUsed {
+		return errors.New("used redemption outcome is immutable")
 	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+	if redemption.OutcomeType == "" {
+		redemption.OutcomeType = RedemptionOutcomeBalance
+	}
+	if err := redemption.ValidateOutcome(); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
-	return err
+	if redemption.EffectiveOutcomeType() == RedemptionOutcomeBalance {
+		if redemption.Quota <= 0 {
+			return errors.New("redemption quota must be positive")
+		}
+		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+			return err
+		}
+	}
+	result := DB.Model(redemption).Where("id = ? AND status <> ?", redemption.Id, common.RedemptionCodeStatusUsed).
+		Select("name", "status", "quota", "outcome_type", "subscription_plan_id", "redeemed_time", "expired_time").Updates(redemption)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		var current Redemption
+		if err := DB.Select("status").First(&current, "id = ?", redemption.Id).Error; err != nil {
+			return err
+		}
+		if current.Status == common.RedemptionCodeStatusUsed {
+			return errors.New("used redemption outcome is immutable")
+		}
+	}
+	return nil
 }
 
 func (redemption *Redemption) Delete() error {

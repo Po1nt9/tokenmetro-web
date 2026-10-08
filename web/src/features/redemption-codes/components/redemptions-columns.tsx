@@ -155,6 +155,31 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       size: 320,
     },
     {
+      accessorKey: 'outcome_type',
+      header: t('Redemption result'),
+      cell: ({ row }) => {
+        const redemption = row.original
+        return redemption.outcome_type === 'subscription' ? (
+          <StatusBadge
+            label={t('Subscription plan #{{id}}', {
+              id: redemption.subscription_plan_id,
+            })}
+            variant='info'
+            copyable={false}
+            className='-ml-1.5'
+          />
+        ) : (
+          <StatusBadge
+            label={t('Wallet balance')}
+            variant='neutral'
+            copyable={false}
+            className='-ml-1.5'
+          />
+        )
+      },
+      size: 180,
+    },
+    {
       accessorKey: 'quota',
       header: t('Quota'),
       cell: ({ row }) => {

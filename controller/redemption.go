@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -86,13 +85,19 @@ func AddRedemption(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionCountMax)
 		return
 	}
-	if redemption.Quota <= 0 {
-		common.ApiError(c, errors.New("redemption quota must be positive"))
-		return
-	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+	if err := validateRedemptionOutcome(&redemption); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if redemption.EffectiveOutcomeType() == model.RedemptionOutcomeBalance {
+		if redemption.Quota <= 0 {
+			common.ApiError(c, errors.New("redemption quota must be positive"))
+			return
+		}
+		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
@@ -102,13 +107,16 @@ func AddRedemption(c *gin.Context) {
 	for i := 0; i < redemption.Count; i++ {
 		key := common.GetUUID()
 		cleanRedemption := model.Redemption{
-			UserId:      c.GetInt("id"),
-			Name:        redemption.Name,
-			Key:         key,
-			CreatedTime: common.GetTimestamp(),
-			Quota:       redemption.Quota,
-			ExpiredTime: redemption.ExpiredTime,
+			UserId:             c.GetInt("id"),
+			Name:               redemption.Name,
+			Key:                key,
+			CreatedTime:        common.GetTimestamp(),
+			Quota:              redemption.Quota,
+			OutcomeType:        redemption.OutcomeType,
+			SubscriptionPlanId: redemption.SubscriptionPlanId,
+			ExpiredTime:        redemption.ExpiredTime,
 		}
+
 		err = cleanRedemption.Insert()
 		if err != nil {
 			common.SysError("failed to insert redemption: " + err.Error())
@@ -122,9 +130,11 @@ func AddRedemption(c *gin.Context) {
 		keys = append(keys, key)
 	}
 	recordManageAudit(c, "redemption.create", map[string]any{
-		"name":  redemption.Name,
-		"count": redemption.Count,
-		"quota": logger.LogQuota(redemption.Quota),
+		"name":                 redemption.Name,
+		"count":                redemption.Count,
+		"quota":                redemption.Quota,
+		"outcome_type":         redemption.EffectiveOutcomeType(),
+		"subscription_plan_id": redemption.SubscriptionPlanId,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -162,13 +172,27 @@ func UpdateRedemption(c *gin.Context) {
 		return
 	}
 	if statusOnly == "" {
-		if redemption.Quota <= 0 {
-			common.ApiError(c, errors.New("redemption quota must be positive"))
+		if cleanRedemption.Status == common.RedemptionCodeStatusUsed {
+			common.ApiError(c, errors.New("used redemption outcome is immutable"))
 			return
 		}
-		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
-			common.ApiError(c, err)
-			return
+		if redemption.OutcomeType != "" || redemption.SubscriptionPlanId != 0 {
+			if err := validateRedemptionOutcome(&redemption); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			cleanRedemption.OutcomeType = redemption.OutcomeType
+			cleanRedemption.SubscriptionPlanId = redemption.SubscriptionPlanId
+		}
+		if cleanRedemption.EffectiveOutcomeType() == model.RedemptionOutcomeBalance {
+			if redemption.Quota <= 0 {
+				common.ApiError(c, errors.New("redemption quota must be positive"))
+				return
+			}
+			if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+				common.ApiError(c, err)
+				return
+			}
 		}
 		if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
@@ -177,7 +201,12 @@ func UpdateRedemption(c *gin.Context) {
 		// If you add more fields, please also update redemption.Update()
 		cleanRedemption.Name = redemption.Name
 		cleanRedemption.Quota = redemption.Quota
+		if redemption.OutcomeType != "" || redemption.SubscriptionPlanId != 0 {
+			cleanRedemption.OutcomeType = redemption.OutcomeType
+			cleanRedemption.SubscriptionPlanId = redemption.SubscriptionPlanId
+		}
 		cleanRedemption.ExpiredTime = redemption.ExpiredTime
+
 	}
 	if statusOnly != "" {
 		cleanRedemption.Status = redemption.Status
@@ -207,6 +236,25 @@ func DeleteInvalidRedemption(c *gin.Context) {
 		"data":    rows,
 	})
 	return
+}
+
+func validateRedemptionOutcome(redemption *model.Redemption) error {
+	if redemption.OutcomeType == "" {
+		redemption.OutcomeType = model.RedemptionOutcomeBalance
+	}
+	if err := redemption.ValidateOutcome(); err != nil {
+		return err
+	}
+	if redemption.EffectiveOutcomeType() == model.RedemptionOutcomeSubscription {
+		var plan model.SubscriptionPlan
+		if err := model.DB.Where("id = ?", redemption.SubscriptionPlanId).First(&plan).Error; err != nil {
+			return errors.New("subscription plan not found")
+		}
+		if !plan.Enabled {
+			return errors.New("subscription plan is disabled")
+		}
+	}
+	return nil
 }
 
 func validateExpiredTime(c *gin.Context, expired int64) (bool, string) {

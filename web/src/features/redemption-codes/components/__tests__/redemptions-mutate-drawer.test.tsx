@@ -1,3 +1,10 @@
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  type RenderResult,
+} from '@testing-library/react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,13 +23,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  type RenderResult,
-} from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import type { Redemption } from '../../types'
@@ -53,6 +54,7 @@ type ApiMethod = (url: string, data?: unknown) => Promise<{ data: unknown }>
 type MockableApi = {
   get: ApiMethod
   put: ApiMethod
+  post: ApiMethod
 }
 type RenderedDrawer = {
   result: RenderResult
@@ -65,6 +67,7 @@ type CurrencyFixture = {
 const apiClient = api as unknown as MockableApi
 const originalGet = apiClient.get
 const originalPut = apiClient.put
+const originalPost = apiClient.post
 const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
@@ -76,6 +79,8 @@ function redemption(id: number, quota = 500001): Redemption {
     key: `key-${id}`,
     status: 1,
     quota,
+    outcome_type: 'balance',
+    subscription_plan_id: 0,
     created_time: 1,
     redeemed_time: 0,
     expired_time: 0,
@@ -180,6 +185,7 @@ async function waitForLoadedForm(): Promise<void> {
 afterEach(() => {
   apiClient.get = originalGet
   apiClient.put = originalPut
+  apiClient.post = originalPost
   Reflect.set(console, 'log', originalConsoleLog)
   toast.dismiss()
   localStorage.clear()
@@ -189,7 +195,12 @@ afterEach(() => {
 describe('redemption drawer', () => {
   test('shows the reported CNY quota without floating-point noise', async () => {
     const original = redemption(1, 13888889)
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
 
     await renderDrawer(original, {
       quotaDisplayType: 'CNY',
@@ -242,7 +253,12 @@ describe('redemption drawer', () => {
   test('keeps the original quota when another field changes', async () => {
     const original = redemption(1)
     const updates: Array<Record<string, unknown>> = []
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
     apiClient.put = async (_url, data) => {
       expect(data && typeof data === 'object').toBeTruthy()
       updates.push(data as Record<string, unknown>)
@@ -264,7 +280,12 @@ describe('redemption drawer', () => {
   test('recalculates quota when the quota field changes', async () => {
     const original = redemption(1)
     const updates: Array<Record<string, unknown>> = []
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
     apiClient.put = async (_url, data) => {
       expect(data && typeof data === 'object').toBeTruthy()
       updates.push(data as Record<string, unknown>)
@@ -278,6 +299,57 @@ describe('redemption drawer', () => {
     await waitFor(() => expect(updates).toHaveLength(1))
 
     expect(updates[0]?.quota).toBe(1000000)
+  })
+
+  test('submits the selected subscription plan without wallet quota', async () => {
+    const original = redemption(1)
+    const updates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return {
+          data: {
+            success: true,
+            data: [
+              {
+                plan: {
+                  id: 42,
+                  title: 'Monthly access',
+                  enabled: true,
+                },
+              },
+            ],
+          },
+        }
+      }
+      return { data: { success: true, data: original } }
+    }
+    apiClient.put = async (_url, data) => {
+      updates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Monthly access' })
+    )
+    changeInput(getControlByLabel('Name'), 'subscription-code')
+    submitForm()
+
+    await waitFor(() => expect(updates).toHaveLength(1))
+    expect(updates[0]?.outcome_type).toBe('subscription')
+    expect(updates[0]?.subscription_plan_id).toBe(42)
+    expect(updates[0]?.quota).toBe(0)
   })
 
   test('ignores an older response after switching records', async () => {
