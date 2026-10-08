@@ -23,16 +23,52 @@ import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { toast } from 'sonner'
 
-import { redeemTopupCode } from '../../api'
+import { previewRedemptionCode, redeemTopupCode } from '../../api'
 import { useRedemption } from '../use-redemption'
 
 vi.mock('@/lib/api', () => ({ getSelf: vi.fn() }))
 vi.mock('@/lib/format', () => ({ formatQuota: vi.fn((quota: number) => `quota:${quota}`) }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-vi.mock('../../api', () => ({ redeemTopupCode: vi.fn() }))
+vi.mock('../../api', () => ({ previewRedemptionCode: vi.fn(), redeemTopupCode: vi.fn() }))
 
 describe('wallet redemption outcomes', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  test('previews a redemption without executing it and retains only the server summary', async () => {
+    const summary = { outcome_type: 'balance' as const, wallet_quota: 750, balance_after: 1000 }
+    vi.mocked(previewRedemptionCode).mockResolvedValue({ success: true, data: summary })
+    const { result } = renderHook(() => useRedemption())
+
+    await act(async () => expect(await result.current.previewCode('TEST-CODE')).toBe(true))
+
+    expect(result.current.preview).toEqual(summary)
+    expect(previewRedemptionCode).toHaveBeenCalledWith({ key: 'TEST-CODE' })
+    expect(redeemTopupCode).not.toHaveBeenCalled()
+  })
+
+  test('clears a stale preview when server preview validation fails', async () => {
+    vi.mocked(previewRedemptionCode).mockResolvedValue({ success: false, message: 'Redemption failed' })
+    const { result } = renderHook(() => useRedemption())
+
+    await act(async () => expect(await result.current.previewCode('TEST-CODE')).toBe(false))
+
+    expect(result.current.preview).toBeNull()
+    expect(redeemTopupCode).not.toHaveBeenCalled()
+  })
+
+  test('clears preview and reports failure when code was used before confirmation', async () => {
+    vi.mocked(redeemTopupCode).mockResolvedValue({ success: false, message: 'Redemption failed' })
+    const { result } = renderHook(() => useRedemption())
+
+    await act(async () => {
+      await result.current.previewCode('TEST-CODE')
+      await result.current.redeemCode('TEST-CODE')
+    })
+
+    expect(result.current.preview).toBeNull()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(getSelf).not.toHaveBeenCalled()
+  })
 
   test('shows the credited wallet quota for a structured balance redemption', async () => {
     vi.mocked(redeemTopupCode).mockResolvedValue({

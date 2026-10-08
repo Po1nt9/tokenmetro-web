@@ -13,6 +13,65 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestPreviewRedemptionReturnsEntitlementSummaryWithoutCodeOrState(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 500)
+	preview, err := PreviewRedemption(key, userId)
+	require.NoError(t, err)
+	assert.Equal(t, RedemptionOutcomeBalance, preview.OutcomeType)
+	assert.Equal(t, 500, preview.WalletQuota)
+	assert.Equal(t, 500, preview.BalanceAfter)
+	encoded, err := common.Marshal(preview)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), key)
+	assert.NotContains(t, string(encoded), "status")
+
+	require.NoError(t, DB.Model(&Redemption{}).Where("`key` = ?", key).Update("expired_time", common.GetTimestamp()-1).Error)
+	_, err = PreviewRedemption(key, userId)
+	assert.ErrorIs(t, err, ErrRedeemFailed)
+}
+
+func TestPreviewSubscriptionSummarizesPlanAndRevalidatesAtRedeem(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 100)
+	require.NoError(t, DB.AutoMigrate(&SubscriptionPlan{}, &UserSubscription{}))
+	plan := &SubscriptionPlan{Title: "Monthly Pro", Enabled: true, DurationUnit: SubscriptionDurationMonth, DurationValue: 1, TotalAmount: 1200, QuotaResetPeriod: SubscriptionResetMonthly, UpgradeGroup: "pro", DowngradeGroup: "default"}
+	require.NoError(t, DB.Create(plan).Error)
+	require.NoError(t, DB.Model(&Redemption{}).Where("`key` = ?", key).Updates(map[string]any{"outcome_type": RedemptionOutcomeSubscription, "subscription_plan_id": plan.Id}).Error)
+	preview, err := PreviewRedemption(key, userId)
+	require.NoError(t, err)
+	require.NotNil(t, preview.Subscription)
+	assert.Equal(t, plan.Title, preview.Subscription.PlanTitle)
+	assert.Equal(t, plan.TotalAmount, preview.Subscription.Quota)
+	assert.Equal(t, SubscriptionResetMonthly, preview.Subscription.ResetPeriod)
+	assert.Equal(t, "pro", preview.Subscription.UpgradeGroup)
+
+	require.NoError(t, DB.Model(&Redemption{}).Where("`key` = ?", key).Update("status", common.RedemptionCodeStatusUsed).Error)
+	_, err = PreviewRedemption(key, userId)
+	require.ErrorIs(t, err, ErrRedeemFailed)
+	var user User
+	require.NoError(t, DB.First(&user, userId).Error)
+	assert.Zero(t, user.Quota)
+	var subscriptions int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ?", userId).Count(&subscriptions).Error)
+	assert.Zero(t, subscriptions)
+}
+
+func TestPreviewRedemptionMasksInvalidDisabledUsedAndExpiredCodes(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 100)
+	assert.ErrorIs(t, func() error { _, err := PreviewRedemption("not-a-code", userId); return err }(), ErrRedeemFailed)
+	for _, state := range []struct {
+		status  int
+		expired int64
+	}{
+		{status: common.RedemptionCodeStatusDisabled},
+		{status: common.RedemptionCodeStatusUsed},
+		{status: common.RedemptionCodeStatusEnabled, expired: common.GetTimestamp() - 1},
+	} {
+		require.NoError(t, DB.Model(&Redemption{}).Where("`key` = ?", key).Updates(map[string]any{"status": state.status, "expired_time": state.expired}).Error)
+		_, err := PreviewRedemption(key, userId)
+		assert.ErrorIs(t, err, ErrRedeemFailed)
+	}
+}
+
 func TestSearchRedemptionsFiltersAndPaginates(t *testing.T) {
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)

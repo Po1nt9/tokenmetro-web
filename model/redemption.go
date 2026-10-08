@@ -80,6 +80,84 @@ type RedemptionResult struct {
 	RechargeEvent RechargeEvent         `json:"recharge_event"`
 }
 
+type RedemptionPreview struct {
+	OutcomeType  RedemptionOutcomeType          `json:"outcome_type"`
+	WalletQuota  int                            `json:"wallet_quota,omitempty"`
+	BalanceAfter int                            `json:"balance_after,omitempty"`
+	Subscription *RedemptionSubscriptionPreview `json:"subscription,omitempty"`
+}
+
+type RedemptionSubscriptionPreview struct {
+	PlanTitle          string `json:"plan_title"`
+	DurationUnit       string `json:"duration_unit"`
+	DurationValue      int    `json:"duration_value"`
+	CustomSeconds      int64  `json:"custom_seconds,omitempty"`
+	Quota              int64  `json:"quota"`
+	ResetPeriod        string `json:"reset_period"`
+	ResetCustomSeconds int64  `json:"reset_custom_seconds,omitempty"`
+	UpgradeGroup       string `json:"upgrade_group,omitempty"`
+	DowngradeGroup     string `json:"downgrade_group,omitempty"`
+}
+
+// PreviewRedemption returns only the grant summary. It deliberately does not lock or reserve the code.
+func PreviewRedemption(key string, userId int) (RedemptionPreview, error) {
+	var preview RedemptionPreview
+	if key == "" || userId <= 0 {
+		return preview, ErrRedeemFailed
+	}
+	keyCol := "`key`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		keyCol = `"key"`
+	}
+	var redemption Redemption
+	if err := DB.Where(keyCol+" = ? AND status = ?", key, common.RedemptionCodeStatusEnabled).First(&redemption).Error; err != nil {
+		return preview, ErrRedeemFailed
+	}
+	if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
+		return preview, ErrRedeemFailed
+	}
+	if redemption.OutcomeType == "" {
+		redemption.OutcomeType = RedemptionOutcomeBalance
+	}
+	if err := redemption.ValidateOutcome(); err != nil {
+		return RedemptionPreview{}, ErrRedeemFailed
+	}
+	preview.OutcomeType = redemption.EffectiveOutcomeType()
+	if preview.OutcomeType == RedemptionOutcomeBalance {
+		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+			return RedemptionPreview{}, ErrRedeemFailed
+		}
+		if err := ValidateTopUpQuotaCapacity(userId, redemption.Quota); err != nil {
+			return RedemptionPreview{}, ErrRedeemFailed
+		}
+		var user User
+		if err := DB.Select("quota").First(&user, "id = ?", userId).Error; err != nil {
+			return RedemptionPreview{}, ErrRedeemFailed
+		}
+		preview.WalletQuota = redemption.Quota
+		preview.BalanceAfter = user.Quota + redemption.Quota
+		return preview, nil
+	}
+	var plan SubscriptionPlan
+	if err := DB.Where("id = ? AND enabled = ?", redemption.SubscriptionPlanId, true).First(&plan).Error; err != nil {
+		return RedemptionPreview{}, ErrRedeemFailed
+	}
+	plan.NormalizeDefaults()
+	if plan.MaxPurchasePerUser > 0 {
+		count, err := CountUserSubscriptionsByPlan(userId, plan.Id)
+		if err != nil || count >= int64(plan.MaxPurchasePerUser) {
+			return RedemptionPreview{}, ErrRedeemFailed
+		}
+	}
+	preview.Subscription = &RedemptionSubscriptionPreview{
+		PlanTitle: plan.Title, DurationUnit: plan.DurationUnit, DurationValue: plan.DurationValue,
+		CustomSeconds: plan.CustomSeconds, Quota: plan.TotalAmount,
+		ResetPeriod: NormalizeResetPeriod(plan.QuotaResetPeriod), ResetCustomSeconds: plan.QuotaResetCustomSeconds,
+		UpgradeGroup: plan.UpgradeGroup, DowngradeGroup: plan.DowngradeGroup,
+	}
+	return preview, nil
+}
+
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
 	// 开始事务
 	tx := DB.Begin()

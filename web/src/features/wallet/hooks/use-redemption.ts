@@ -24,8 +24,8 @@ import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { redeemTopupCode } from '../api'
-import type { RedemptionOutcome } from '../types'
+import { previewRedemptionCode, redeemTopupCode } from '../api'
+import type { RedemptionOutcome, RedemptionPreview } from '../types'
 
 // ============================================================================
 // Redemption Hook
@@ -49,35 +49,59 @@ function getRedemptionSuccessMessage(data: RedemptionOutcome | number): string {
 
 export function useRedemption() {
   const [redeeming, setRedeeming] = useState(false)
+  const [preview, setPreview] = useState<RedemptionPreview | null>(null)
 
-  const redeemCode = useCallback(async (code: string): Promise<boolean> => {
+  const previewCode = useCallback(async (code: string): Promise<boolean> => {
     if (!code || code.trim() === '') {
       toast.error(i18next.t('Please enter a redemption code'))
       return false
     }
-
     try {
       setRedeeming(true)
-      const response = await redeemTopupCode({ key: code })
-
+      const response = await previewRedemptionCode({ key: code })
       if (response.success && response.data) {
-        toast.success(getRedemptionSuccessMessage(response.data))
-        await getSelf()
+        setPreview(response.data)
         return true
       }
-
+      setPreview(null)
       handleServerError(response, i18next.t('Redemption failed'))
       return false
-    } catch (_error) {
-      handleServerError(_error, i18next.t('Redemption failed'))
+    } catch (error) {
+      setPreview(null)
+      handleServerError(error, i18next.t('Redemption failed'))
       return false
     } finally {
       setRedeeming(false)
     }
   }, [])
 
-  return {
-    redeeming,
-    redeemCode,
-  }
+  const redeemCode = useCallback(async (code: string): Promise<boolean> => {
+    if (!code || code.trim() === '') {
+      toast.error(i18next.t('Please enter a redemption code'))
+      return false
+    }
+    try {
+      setRedeeming(true)
+      const response = await redeemTopupCode({ key: code })
+      if (response.success && response.data) {
+        toast.success(getRedemptionSuccessMessage(response.data))
+        setPreview(null)
+        await getSelf()
+        return true
+      }
+      setPreview(null)
+      handleServerError(response, i18next.t('Redemption failed'))
+      return false
+    } catch (error) {
+      setPreview(null)
+      handleServerError(error, i18next.t('Redemption failed'))
+      return false
+    } finally {
+      setRedeeming(false)
+    }
+  }, [])
+
+  const clearPreview = useCallback(() => setPreview(null), [])
+
+  return { redeeming, preview, previewCode, redeemCode, clearPreview }
 }

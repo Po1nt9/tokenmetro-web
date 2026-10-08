@@ -33,6 +33,25 @@ export interface ApiResponse<T = unknown> {
  * Standard API response types
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
+export interface RedemptionSubscriptionPreview {
+  plan_title: string
+  duration_unit: string
+  duration_value: number
+  custom_seconds?: number
+  quota: number
+  reset_period: string
+  reset_custom_seconds?: number
+  upgrade_group?: string
+  downgrade_group?: string
+}
+
+export interface RedemptionPreview {
+  outcome_type: 'balance' | 'subscription'
+  wallet_quota?: number
+  balance_after?: number
+  subscription?: RedemptionSubscriptionPreview
+}
+
 export interface RedemptionSubscription {
   id: number
   plan_id: number
@@ -51,6 +70,7 @@ export interface RedemptionOutcome {
 }
 
 export type RedemptionResponse = ApiResponse<RedemptionOutcome | number>
+export type RedemptionPreviewResponse = ApiResponse<RedemptionPreview>
 export type AmountResponse = ApiResponse<string>
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
   url?: string

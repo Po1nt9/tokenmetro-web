@@ -26,6 +26,7 @@ import type {
   ApiResponse,
   TopupInfoResponse,
   RedemptionResponse,
+  RedemptionPreviewResponse,
   AmountResponse,
   PaymentResponse,
   StripePaymentResponse,
@@ -57,6 +58,15 @@ export function isApiSuccess(response: ApiResponse): boolean {
  */
 export async function getTopupInfo(): Promise<TopupInfoResponse> {
   const res = await api.get('/api/user/topup/info')
+  return res.data
+}
+
+export async function previewRedemptionCode(
+  request: RedemptionRequest
+): Promise<RedemptionPreviewResponse> {
+  const res = await api.post('/api/user/topup/preview', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
   return res.data
 }
 

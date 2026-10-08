@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
 
-import type { TopupInfo } from '../types'
+import type { RedemptionPreview, TopupInfo } from '../types'
 
 /**
  * 兑换码在链动小铺（wzyp.cn）的发售地址。
@@ -47,6 +47,9 @@ interface RechargeFormCardProps {
   redemptionCode: string
   onRedemptionCodeChange: (code: string) => void
   onRedeem: () => void
+  preview: RedemptionPreview | null
+  onConfirmRedemption: () => void
+  onCancelPreview: () => void
   redeeming: boolean
   loading?: boolean
   onOpenBilling?: () => void
@@ -57,6 +60,9 @@ export function RechargeFormCard({
   redemptionCode,
   onRedemptionCodeChange,
   onRedeem,
+  preview,
+  onConfirmRedemption,
+  onCancelPreview,
   redeeming,
   loading,
   onOpenBilling,
@@ -167,15 +173,35 @@ export function RechargeFormCard({
                 />
               </div>
               <Button
-                onClick={onRedeem}
-                disabled={redeeming}
+                onClick={preview ? onConfirmRedemption : onRedeem}
+                disabled={redeeming || (!!preview && !redemptionCode)}
                 variant='outline'
                 className='h-9 px-4'
               >
                 {redeeming && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-                {t('Redeem')}
+                {preview ? t('Confirm redemption') : t('Preview redemption')}
               </Button>
             </div>
+            {preview && (
+              <div role='status' className='mt-3 space-y-2 rounded-md border p-3 text-sm'>
+                {preview.outcome_type === 'balance' ? (
+                  <p>{t('Wallet balance will increase by {{quota}}', { quota: preview.wallet_quota ?? 0 })}</p>
+                ) : (
+                  <>
+                    <p>{preview.subscription?.plan_title}</p>
+                    <p>{t('Validity')}: {preview.subscription?.duration_value} {preview.subscription?.duration_unit}</p>
+                    <p>{t('Quota')}: {preview.subscription?.quota}</p>
+                    <p>{t('Reset period')}: {preview.subscription?.reset_period}</p>
+                    {(preview.subscription?.upgrade_group || preview.subscription?.downgrade_group) && (
+                      <p>{t('Group effect')}: {preview.subscription.upgrade_group || t('No change')} → {preview.subscription.downgrade_group || t('Restore previous group')}</p>
+                    )}
+                  </>
+                )}
+                <Button type='button' variant='ghost' size='sm' onClick={onCancelPreview} disabled={redeeming}>
+                  {t('Cancel')}
+                </Button>
+              </div>
+            )}
           </div>
         </>
       ) : (

@@ -1248,24 +1248,35 @@ func TopUp(c *gin.Context) {
 	}
 	defer lock.Unlock()
 	req := topUpRequest{}
-	err := c.ShouldBindJSON(&req)
-	if err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	result, err := model.Redeem(req.Key, id)
 	if err != nil {
-
-		// 不向用户暴露兑换失败的细分原因，避免攻击者根据错误类型判断兑换码状态。
 		common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
 		logger.LogError(c, fmt.Sprintf("failed to redeem code for user %d: %s", id, err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    result,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": result})
+}
+
+func PreviewTopUp(c *gin.Context) {
+	if !operation_setting.IsPaymentComplianceConfirmed() {
+		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+		return
+	}
+	var req topUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	preview, err := model.PreviewRedemption(req.Key, c.GetInt("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
+		return
+	}
+	common.ApiSuccess(c, preview)
 }
 
 type UpdateUserSettingRequest struct {

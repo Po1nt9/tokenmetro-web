@@ -54,7 +54,7 @@ export function Wallet(props: WalletProps) {
     transferQuota,
     transferring,
   } = useAffiliate()
-  const { redeeming, redeemCode } = useRedemption()
+  const { redeeming, preview, previewCode, redeemCode, clearPreview } = useRedemption()
 
   // Fetch and refresh user data
   const fetchUser = useCallback(async () => {
@@ -98,15 +98,23 @@ export function Wallet(props: WalletProps) {
     }
   }, [props.initialShowHistory])
 
-  // Handle redemption
   const handleRedeem = async () => {
     if (!redemptionCode) return
+    await previewCode(redemptionCode)
+  }
 
+  const handleConfirmRedemption = async () => {
+    if (!redemptionCode || !preview) return
     const success = await redeemCode(redemptionCode)
     if (success) {
       setRedemptionCode('')
       await fetchUser()
     }
+  }
+
+  const handleRedemptionCodeChange = (code: string) => {
+    clearPreview()
+    setRedemptionCode(code)
   }
 
   // Handle transfer
@@ -144,8 +152,11 @@ export function Wallet(props: WalletProps) {
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   redemptionCode={redemptionCode}
-                  onRedemptionCodeChange={setRedemptionCode}
+                  onRedemptionCodeChange={handleRedemptionCodeChange}
                   onRedeem={handleRedeem}
+                  preview={preview}
+                  onConfirmRedemption={handleConfirmRedemption}
+                  onCancelPreview={clearPreview}
                   redeeming={redeeming}
                   loading={topupLoading}
                   onOpenBilling={() => setBillingDialogOpen(true)}

@@ -49,6 +49,9 @@ const props = {
   redemptionCode: '',
   onRedemptionCodeChange: vi.fn(),
   onRedeem: vi.fn(),
+  preview: null,
+  onConfirmRedemption: vi.fn(),
+  onCancelPreview: vi.fn(),
   redeeming: false,
   onOpenBilling: vi.fn(),
 }
@@ -109,16 +112,45 @@ describe('redemption code purchases', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Redemption code' }), {
       target: { value: 'NEW-CODE' },
     })
-    expect(props.onRedemptionCodeChange).toHaveBeenCalledWith('NEW-CODE')
-    fireEvent.click(screen.getByRole('button', { name: 'Redeem' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview redemption' }))
     expect(props.onRedeem).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Order History' }))
+
     expect(props.onOpenBilling).toHaveBeenCalledOnce()
+  })
+
+  it('shows the server preview and exposes separate confirm and cancel actions', () => {
+    render(
+      <RechargeFormCard
+        {...{
+          ...props,
+          redemptionCode: 'TEST-CODE',
+          preview: {
+            outcome_type: 'subscription',
+            subscription: {
+              plan_title: 'Monthly Pro',
+              duration_unit: 'month',
+              duration_value: 1,
+              quota: 1200,
+              reset_period: 'monthly',
+              upgrade_group: 'pro',
+            },
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('Monthly Pro')
+    expect(screen.getByRole('button', { name: 'Confirm redemption' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm redemption' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(props.onConfirmRedemption).toHaveBeenCalledOnce()
+    expect(props.onCancelPreview).toHaveBeenCalledOnce()
   })
 
   it('prevents repeated redemption while processing', () => {
     render(<RechargeFormCard {...props} redemptionCode='CODE' redeeming />)
-    fireEvent.click(screen.getByRole('button', { name: 'Redeem' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview redemption' }))
     expect(props.onRedeem).not.toHaveBeenCalled()
   })
 })
