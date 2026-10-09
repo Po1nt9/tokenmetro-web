@@ -342,6 +342,48 @@ func TestRedeemFailureLeavesNoInvitationReward(t *testing.T) {
 	})
 }
 
+// TestRedeemRollsBackWhenTheRewardLedgerRowAlreadyExists pins the deliberate
+// design around the unique index on redemption_id: it is a backstop that must
+// fail the whole redemption loudly, not a conflict to swallow. Redeem's own
+// conditional status advance makes the seeded state unreachable, which is the
+// point — the case reproduces what a regression in that advance would leave
+// behind, so a future OnConflict DoNothing cannot quietly change the outcome.
+func TestRedeemRollsBackWhenTheRewardLedgerRowAlreadyExists(t *testing.T) {
+	inviterId := setupInvitationRewardFixture(t)
+	enableInviteRewardRatio(t, "0.05")
+	inviteeId := createInvitationRewardRedeemer(t, inviterId)
+	redemption := insertInvitationRewardRedemption(t, 500_000, true)
+	seeded := &InvitationReward{
+		RedemptionId: redemption.Id,
+		InviterId:    inviterId,
+		InviteeId:    inviteeId,
+		BasisQuota:   500_000,
+		Ratio:        invitationRewardTestRatio,
+		RewardQuota:  25_000,
+		Status:       InvitationRewardStatusPending,
+		CreatedTime:  common.GetTimestamp(),
+	}
+	require.NoError(t, DB.Create(seeded).Error)
+
+	_, err := Redeem(redemption.Key, inviteeId)
+	require.ErrorIs(t, err, ErrRedeemFailed, "the unique-index conflict must propagate, not be skipped")
+
+	var stored Redemption
+	require.NoError(t, DB.First(&stored, redemption.Id).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, stored.Status, "the whole redemption must roll back so the code stays usable")
+	assert.Zero(t, stored.RedeemedTime)
+	assert.Zero(t, stored.UsedUserId)
+
+	var user User
+	require.NoError(t, DB.First(&user, inviteeId).Error)
+	assert.Zero(t, user.Quota, "the balance credit must roll back with the redemption")
+
+	var rewards []InvitationReward
+	require.NoError(t, DB.Where("redemption_id = ?", redemption.Id).Find(&rewards).Error)
+	require.Len(t, rewards, 1)
+	assert.Equal(t, seeded.Id, rewards[0].Id, "the pre-existing ledger row must be left untouched")
+}
+
 func TestInvitationRewardRatioSnapshotSurvivesOptionChange(t *testing.T) {
 	inviterId := setupInvitationRewardFixture(t)
 	enableInviteRewardRatio(t, "0.05")

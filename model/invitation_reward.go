@@ -97,6 +97,14 @@ func createPendingInvitationRewardTx(tx *gorm.DB, redemption *Redemption, invite
 		CreatedTime:  now,
 		SettleAfter:  now + InvitationRewardObservationWindowSeconds,
 	}
+	// The unique index on redemption_id is the backstop, not the idempotency
+	// guard: idempotency comes from the redemption's conditional status
+	// advance in this same transaction, so a second row for one redemption is
+	// unreachable unless that state machine breaks. Deliberately no OnConflict
+	// DoNothing: on PostgreSQL a unique violation aborts the transaction
+	// anyway, and that loud failure — redemption rolled back, code still
+	// usable, error propagated — is what we want. Silently skipping the
+	// reward row would leave the ledger short.
 	return tx.Create(reward).Error
 }
 
