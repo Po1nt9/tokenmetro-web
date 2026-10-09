@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,6 +106,82 @@ func TestRedemptionExecuteAfterPreviewIsRevalidated(t *testing.T) {
 	var stored model.User
 	require.NoError(t, model.DB.First(&stored, user.Id).Error)
 	assert.Equal(t, 750, stored.Quota)
+}
+
+func TestRedemptionExecuteReturnsBareNumberForBalanceCodes(t *testing.T) {
+	router, user, token := setupRedemptionPreviewAPI(t)
+	response := redemptionAPIRequest(router, "/api/user/topup", token, "10000000000000000000000000000071")
+	require.Equal(t, http.StatusOK, response.Code)
+
+	var payload struct {
+		Success bool            `json:"success"`
+		Data    json.RawMessage `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.NotEmpty(t, payload.Data)
+	// Bundles built before the fork and third-party scripts read `data` as a
+	// bare number, so a balance code must not wrap the quota in an object.
+	assert.NotEqual(t, byte('{'), payload.Data[0])
+	assert.NotContains(t, string(payload.Data), "outcome_type")
+	var quota float64
+	require.NoError(t, common.Unmarshal(payload.Data, &quota))
+	assert.Equal(t, float64(750), quota)
+
+	var stored model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 750, stored.Quota)
+}
+
+func TestRedemptionExecuteKeepsObjectForSubscriptionCodes(t *testing.T) {
+	router, user, token := setupRedemptionPreviewAPI(t)
+	plan := &model.SubscriptionPlan{
+		Title: "Redemption plan", DurationUnit: model.SubscriptionDurationMonth,
+		DurationValue: 1, TotalAmount: 500000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	const code = "10000000000000000000000000000072"
+	require.NoError(t, model.DB.Create(&model.Redemption{
+		Name: "api-subscription-test", Key: code, Status: common.RedemptionCodeStatusEnabled,
+		Quota: 0, OutcomeType: model.RedemptionOutcomeSubscription, SubscriptionPlanId: plan.Id,
+		CreatedTime: common.GetTimestamp(),
+	}).Error)
+
+	response := redemptionAPIRequest(router, "/api/user/topup", token, code)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	var payload struct {
+		Success bool            `json:"success"`
+		Data    json.RawMessage `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.NotEmpty(t, payload.Data)
+	assert.Equal(t, byte('{'), payload.Data[0])
+
+	var outcome struct {
+		OutcomeType  string `json:"outcome_type"`
+		Subscription *struct {
+			Id     int `json:"id"`
+			PlanId int `json:"plan_id"`
+		} `json:"subscription"`
+		RechargeEvent struct {
+			RedemptionId   int    `json:"redemption_id"`
+			UserId         int    `json:"user_id"`
+			OutcomeType    string `json:"outcome_type"`
+			PlanId         int    `json:"plan_id"`
+			SubscriptionId int    `json:"subscription_id"`
+		} `json:"recharge_event"`
+	}
+	require.NoError(t, common.Unmarshal(payload.Data, &outcome))
+	assert.Equal(t, string(model.RedemptionOutcomeSubscription), outcome.OutcomeType)
+	require.NotNil(t, outcome.Subscription)
+	assert.Equal(t, plan.Id, outcome.Subscription.PlanId)
+	assert.Equal(t, user.Id, outcome.RechargeEvent.UserId)
+	assert.Equal(t, string(model.RedemptionOutcomeSubscription), outcome.RechargeEvent.OutcomeType)
+	assert.Equal(t, plan.Id, outcome.RechargeEvent.PlanId)
+	assert.Equal(t, outcome.Subscription.Id, outcome.RechargeEvent.SubscriptionId)
+	assert.NotZero(t, outcome.RechargeEvent.RedemptionId)
 }
 
 func TestAddRedemptionRejectsUnavailableSubscriptionPlan(t *testing.T) {

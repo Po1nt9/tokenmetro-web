@@ -1276,7 +1276,17 @@ func TopUp(c *gin.Context) {
 		logger.LogError(c, fmt.Sprintf("failed to redeem code for user %d: %s", id, err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": result})
+	// A balance code must answer with the bare quota number (issue 09, adopting
+	// upstream PR #5084's shape): bundles built before the fork and still served
+	// from browser caches, as well as third-party scripts, parse `data` as a
+	// number, so an object here renders as "Added: NaN" even though the quota
+	// was credited. Subscription codes keep the full result object
+	// (outcome_type / subscription / recharge_event) for the current frontend.
+	data := any(result)
+	if result.OutcomeType == model.RedemptionOutcomeBalance {
+		data = result.WalletQuota
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": data})
 }
 
 func PreviewTopUp(c *gin.Context) {
