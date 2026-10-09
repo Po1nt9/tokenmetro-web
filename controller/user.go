@@ -461,6 +461,24 @@ func GetAffCode(c *gin.Context) {
 	return
 }
 
+// GetAffiliateRewards returns the logged-in user's own invitation reward
+// ledger (newest first, capped) plus the quota still pending settlement. The
+// inviter id always comes from the authenticated session, never a parameter,
+// so one user can never read another user's rewards.
+func GetAffiliateRewards(c *gin.Context) {
+	overview, err := model.GetAffiliateRewardOverview(c.GetInt("id"), model.AffiliateRewardListLimit)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    overview,
+	})
+	return
+}
+
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")
@@ -1248,23 +1266,45 @@ func TopUp(c *gin.Context) {
 	}
 	defer lock.Unlock()
 	req := topUpRequest{}
-	err := c.ShouldBindJSON(&req)
-	if err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	quota, err := model.Redeem(req.Key, id)
+	result, err := model.Redeem(req.Key, id)
 	if err != nil {
-		// 不向用户暴露兑换失败的细分原因，避免攻击者根据错误类型判断兑换码状态。
 		common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
-		logger.LogError(c, fmt.Sprintf("failed to redeem key %s for user %d: %s", req.Key, id, err.Error()))
+		logger.LogError(c, fmt.Sprintf("failed to redeem code for user %d: %s", id, err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    quota,
-	})
+	// A balance code must answer with the bare quota number (issue 09, adopting
+	// upstream PR #5084's shape): bundles built before the fork and still served
+	// from browser caches, as well as third-party scripts, parse `data` as a
+	// number, so an object here renders as "Added: NaN" even though the quota
+	// was credited. Subscription codes keep the full result object
+	// (outcome_type / subscription / recharge_event) for the current frontend.
+	data := any(result)
+	if result.OutcomeType == model.RedemptionOutcomeBalance {
+		data = result.WalletQuota
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": data})
+}
+
+func PreviewTopUp(c *gin.Context) {
+	if !operation_setting.IsPaymentComplianceConfirmed() {
+		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+		return
+	}
+	var req topUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	preview, err := model.PreviewRedemption(req.Key, c.GetInt("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
+		return
+	}
+	common.ApiSuccess(c, preview)
 }
 
 type UpdateUserSettingRequest struct {

@@ -124,8 +124,17 @@ export function RedemptionsMobileList(props: RedemptionsMobileListProps) {
           >
             <div className='flex items-start justify-between gap-3'>
               <div className='min-w-0'>
-                <div className='truncate text-sm font-semibold'>
-                  {redemption.name}
+                <div className='flex flex-wrap items-center gap-1.5'>
+                  <span className='truncate text-sm font-semibold'>
+                    {redemption.name}
+                  </span>
+                  {redemption.reward_eligible === false && (
+                    <StatusBadge
+                      label={t('Not reward-eligible')}
+                      variant='warning'
+                      copyable={false}
+                    />
+                  )}
                 </div>
                 <div className='text-muted-foreground text-[11px]'>
                   {t('Redemption Code')}
@@ -162,11 +171,25 @@ export function RedemptionsMobileList(props: RedemptionsMobileListProps) {
             </div>
 
             <div className='flex items-center justify-between gap-2 text-xs'>
-              <span className='text-muted-foreground'>{t('Quota')}</span>
-              <span className='font-medium tabular-nums'>
-                {formatQuota(redemption.quota)}
+              <span className='text-muted-foreground'>
+                {t('Redemption result')}
+              </span>
+              <span className='font-medium'>
+                {redemption.outcome_type === 'subscription'
+                  ? t('Subscription plan #{{id}}', {
+                      id: redemption.subscription_plan_id,
+                    })
+                  : t('Wallet balance')}
               </span>
             </div>
+            {redemption.outcome_type !== 'subscription' && (
+              <div className='flex items-center justify-between gap-2 text-xs'>
+                <span className='text-muted-foreground'>{t('Quota')}</span>
+                <span className='font-medium tabular-nums'>
+                  {formatQuota(redemption.quota)}
+                </span>
+              </div>
+            )}
           </div>
         )
       })}

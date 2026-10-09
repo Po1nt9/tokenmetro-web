@@ -33,24 +33,42 @@ import type { RedemptionFormData, Redemption } from '../types'
 
 export function getRedemptionFormSchema(t: TFunction) {
   const msg = getRedemptionFormErrorMessages(t)
-  return z.object({
-    name: z
-      .string()
-      .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
-      .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
-    quota_dollars: z.number().min(0, t('Quota must be a positive number')),
-    expired_time: z.date().optional(),
-    count: z
-      .number()
-      .min(REDEMPTION_VALIDATION.COUNT_MIN, msg.COUNT_INVALID)
-      .max(REDEMPTION_VALIDATION.COUNT_MAX, msg.COUNT_INVALID)
-      .optional(),
-  })
+  return z
+    .object({
+      name: z
+        .string()
+        .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
+        .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
+      outcome_type: z.enum(['balance', 'subscription']),
+      subscription_plan_id: z.number().int().nonnegative(),
+      quota_dollars: z.number().min(0, msg.QUOTA_NON_NEGATIVE),
+      reward_eligible: z.boolean(),
+      expired_time: z.date().optional(),
+      count: z
+        .number()
+        .min(REDEMPTION_VALIDATION.COUNT_MIN, msg.COUNT_INVALID)
+        .max(REDEMPTION_VALIDATION.COUNT_MAX, msg.COUNT_INVALID)
+        .optional(),
+    })
+    .superRefine((data, ctx) => {
+      // A balance outcome must credit a positive amount; a subscription outcome
+      // carries its value in the plan and submits quota 0.
+      if (data.outcome_type === 'balance' && data.quota_dollars === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['quota_dollars'],
+          message: msg.QUOTA_POSITIVE,
+        })
+      }
+    })
 }
 
 export type RedemptionFormValues = {
   name: string
+  outcome_type: 'balance' | 'subscription'
+  subscription_plan_id: number
   quota_dollars: number
+  reward_eligible: boolean
   expired_time?: Date
   count?: number
 }
@@ -61,7 +79,10 @@ export type RedemptionFormValues = {
 
 export const REDEMPTION_FORM_DEFAULT_VALUES: RedemptionFormValues = {
   name: '',
+  outcome_type: 'balance',
+  subscription_plan_id: 0,
   quota_dollars: 10,
+  reward_eligible: true,
   expired_time: undefined,
   count: 1,
 }
@@ -78,10 +99,17 @@ export function transformFormDataToPayload(
 ): RedemptionFormData {
   return {
     name: data.name,
-    quota: parseQuotaFromDollars(data.quota_dollars),
+    outcome_type: data.outcome_type,
+    subscription_plan_id:
+      data.outcome_type === 'subscription' ? data.subscription_plan_id : 0,
+    quota:
+      data.outcome_type === 'balance'
+        ? parseQuotaFromDollars(data.quota_dollars)
+        : 0,
     expired_time: data.expired_time
       ? Math.floor(data.expired_time.getTime() / 1000)
       : 0,
+    reward_eligible: data.reward_eligible,
     count: data.count || 1,
   }
 }
@@ -94,7 +122,10 @@ export function transformRedemptionToFormDefaults(
 ): RedemptionFormValues {
   return {
     name: redemption.name,
+    outcome_type: redemption.outcome_type ?? 'balance',
+    subscription_plan_id: redemption.subscription_plan_id ?? 0,
     quota_dollars: quotaUnitsToEditableAmount(redemption.quota),
+    reward_eligible: redemption.reward_eligible ?? true,
     expired_time:
       redemption.expired_time > 0
         ? new Date(redemption.expired_time * 1000)

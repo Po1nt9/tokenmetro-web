@@ -210,6 +210,8 @@ export const STATIC_I18N_KEYS = [
   'Master instances run scheduled background tasks.',
   'Worker instances do not run master-only background tasks.',
   'Drawing task polling',
+  // System task types
+  'Invitation reward settlement',
 
   // Pricing constants
   'Name',
@@ -296,11 +298,19 @@ export const STATIC_I18N_KEYS = [
   'Failed to delete redemption code',
   'Failed to delete invalid redemption codes',
   'Failed to update redemption code status',
+  'Failed to void invitation reward',
+  'Invitation reward voided successfully',
   'Name must be between {{min}} and {{max}} characters',
   'Count must be between {{min}} and {{max}}',
   'Expired time cannot be earlier than current time',
   'Quota must be a positive number',
+  'Quota must be greater than zero',
   'Successfully created {{count}} redemption codes',
+
+  // Wallet invitation rewards (status labels passed to t at runtime)
+  'Pending Settlement',
+  'Credited',
+  'Voided',
 
   // Home page (constants-driven labels)
   'Cost Tracking',

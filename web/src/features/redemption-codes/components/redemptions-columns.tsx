@@ -77,7 +77,16 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       header: t('Name'),
       meta: { mobileTitle: true },
       cell: ({ row }) => (
-        <span className='font-medium'>{row.getValue('name')}</span>
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <span className='font-medium'>{row.getValue('name')}</span>
+          {row.original.reward_eligible === false && (
+            <StatusBadge
+              label={t('Not reward-eligible')}
+              variant='warning'
+              copyable={false}
+            />
+          )}
+        </div>
       ),
       size: 180,
     },
@@ -153,6 +162,31 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       },
       enableSorting: false,
       size: 320,
+    },
+    {
+      accessorKey: 'outcome_type',
+      header: t('Redemption result'),
+      cell: ({ row }) => {
+        const redemption = row.original
+        return redemption.outcome_type === 'subscription' ? (
+          <StatusBadge
+            label={t('Subscription plan #{{id}}', {
+              id: redemption.subscription_plan_id,
+            })}
+            variant='info'
+            copyable={false}
+            className='-ml-1.5'
+          />
+        ) : (
+          <StatusBadge
+            label={t('Wallet balance')}
+            variant='neutral'
+            copyable={false}
+            className='-ml-1.5'
+          />
+        )
+      },
+      size: 180,
     },
     {
       accessorKey: 'quota',

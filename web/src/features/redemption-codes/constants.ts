@@ -108,9 +108,12 @@ export const ERROR_MESSAGES = {
   DELETE_FAILED: 'Failed to delete redemption code',
   DELETE_INVALID_FAILED: 'Failed to delete invalid redemption codes',
   STATUS_UPDATE_FAILED: 'Failed to update redemption code status',
+  REWARD_VOID_FAILED: 'Failed to void invitation reward',
   NAME_LENGTH_INVALID: 'Name must be between {{min}} and {{max}} characters',
   COUNT_INVALID: 'Count must be between {{min}} and {{max}}',
   EXPIRED_TIME_INVALID: 'Expired time cannot be earlier than current time',
+  QUOTA_NON_NEGATIVE: 'Quota must be zero or greater',
+  QUOTA_POSITIVE: 'Quota must be greater than zero',
 } as const
 
 /** For form schema only: returns translated messages with interpolation. */
@@ -125,6 +128,8 @@ export function getRedemptionFormErrorMessages(t: TFunction) {
       max: REDEMPTION_VALIDATION.COUNT_MAX,
     }),
     EXPIRED_TIME_INVALID: t(ERROR_MESSAGES.EXPIRED_TIME_INVALID),
+    QUOTA_NON_NEGATIVE: t(ERROR_MESSAGES.QUOTA_NON_NEGATIVE),
+    QUOTA_POSITIVE: t(ERROR_MESSAGES.QUOTA_POSITIVE),
   } as const
 }
 
@@ -138,5 +143,6 @@ export const SUCCESS_MESSAGES = {
   REDEMPTION_DELETED: 'Redemption code deleted successfully',
   REDEMPTION_ENABLED: 'Redemption code enabled successfully',
   REDEMPTION_DISABLED: 'Redemption code disabled successfully',
+  REWARD_VOIDED: 'Invitation reward voided successfully',
   COPY_SUCCESS: 'Copied to clipboard',
 } as const

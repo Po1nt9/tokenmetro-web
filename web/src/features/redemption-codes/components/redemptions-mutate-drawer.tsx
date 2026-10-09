@@ -31,6 +31,7 @@ import {
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
   FormControl,
@@ -42,6 +43,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Sheet,
   SheetClose,
   SheetContent,
@@ -50,6 +58,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { getAdminPlans } from '@/features/subscriptions/api'
+import type { SubscriptionPlan } from '@/features/subscriptions/types'
 import {
   formatQuotaWithCurrency,
   getCurrencyDisplay,
@@ -104,11 +114,38 @@ export function RedemptionsMutateDrawer({
   const [loadedRedemption, setLoadedRedemption] = useState<Redemption | null>(
     null
   )
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([])
+
+  useEffect(() => {
+    setPlans([])
+    if (!open) {
+      return
+    }
+    let ignoreResult = false
+    void getAdminPlans()
+      .then((result) => {
+        if (ignoreResult) return
+        if (!result.success || !result.data) {
+          handleServerError(result, t('Failed to load'))
+          return
+        }
+        setPlans(
+          result.data.map((item) => item.plan).filter((plan) => plan.enabled)
+        )
+      })
+      .catch((error: unknown) => {
+        if (!ignoreResult) handleServerError(error)
+      })
+    return () => {
+      ignoreResult = true
+    }
+  }, [open, t])
 
   const form = useForm<RedemptionFormValues>({
     resolver: zodResolver(getRedemptionFormSchema(t)),
     defaultValues: REDEMPTION_FORM_DEFAULT_VALUES,
   })
+  const outcomeType = form.watch('outcome_type')
 
   // Load existing data when updating
   useEffect(() => {
@@ -176,12 +213,17 @@ export function RedemptionsMutateDrawer({
       const basePayload = transformFormDataToPayload(data)
 
       if (isUpdate && currentRow && loadedRedemption) {
-        const quota = form.getFieldState('quota_dollars').isDirty
-          ? basePayload.quota
-          : loadedRedemption.quota
+        let quota = 0
+        if (data.outcome_type === 'balance') {
+          quota = form.getFieldState('quota_dollars').isDirty
+            ? basePayload.quota
+            : loadedRedemption.quota
+        }
         const result = await updateRedemption({
           ...basePayload,
           quota,
+          outcome_type: data.outcome_type,
+          subscription_plan_id: data.subscription_plan_id,
           id: currentRow.id,
         })
         if (result.success) {
@@ -317,30 +359,142 @@ export function RedemptionsMutateDrawer({
 
                   <FormField
                     control={form.control}
-                    name='quota_dollars'
+                    name='outcome_type'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{quotaLabel}</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            type='number'
-                            step={quotaStep}
-                            placeholder={quotaPlaceholder}
-                            onChange={(e) =>
-                              field.onChange(
-                                Number.parseFloat(e.target.value) || 0
-                              )
+                        <FormLabel>{t('Redemption result')}</FormLabel>
+                        <Select
+                          value={field.value}
+                          onValueChange={(value) => {
+                            if (
+                              value === 'balance' ||
+                              value === 'subscription'
+                            ) {
+                              field.onChange(value)
+                              if (value === 'balance') {
+                                form.setValue('subscription_plan_id', 0)
+                              }
                             }
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {tokensOnly
-                            ? t('Enter the quota amount in tokens')
-                            : t('Enter the quota amount in {{currency}}', {
-                                currency: currencyLabel,
-                              })}
-                        </FormDescription>
+                          }}
+                          disabled={loadedRedemption?.status === 3}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value='balance'>
+                              {t('Wallet balance')}
+                            </SelectItem>
+                            <SelectItem value='subscription'>
+                              {t('Subscription plan')}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {outcomeType === 'subscription' && (
+                    <FormField
+                      control={form.control}
+                      name='subscription_plan_id'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Subscription plan')}</FormLabel>
+                          <Select
+                            value={field.value > 0 ? String(field.value) : ''}
+                            onValueChange={(value) =>
+                              field.onChange(Number(value))
+                            }
+                            disabled={loadedRedemption?.status === 3}
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue placeholder={t('Select a plan')} />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {plans.map((plan) => (
+                                <SelectItem
+                                  key={plan.id}
+                                  value={String(plan.id)}
+                                >
+                                  {plan.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {outcomeType === 'balance' && (
+                    <FormField
+                      control={form.control}
+                      name='quota_dollars'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{quotaLabel}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='number'
+                              step={quotaStep}
+                              placeholder={quotaPlaceholder}
+                              onChange={(e) =>
+                                field.onChange(
+                                  Number.parseFloat(e.target.value) || 0
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {tokensOnly
+                              ? t('Enter the quota amount in tokens')
+                              : t('Enter the quota amount in {{currency}}', {
+                                  currency: currencyLabel,
+                                })}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  <FormField
+                    control={form.control}
+                    name='reward_eligible'
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className='flex items-start gap-2.5'>
+                          <FormControl>
+                            <Checkbox
+                              className='mt-0.5'
+                              // Inverted on purpose: field is reward_eligible, label reads "not reward-eligible".
+                              checked={!field.value}
+                              onCheckedChange={(checked) =>
+                                field.onChange(checked !== true)
+                              }
+                            />
+                          </FormControl>
+                          <div className='grid gap-1.5'>
+                            <FormLabel className='leading-5'>
+                              {t(
+                                'Not reward-eligible (granted/trial/compensation batches)'
+                              )}
+                            </FormLabel>
+                            <FormDescription>
+                              {t(
+                                'Codes in this batch earn no invitation reward when redeemed.'
+                              )}
+                            </FormDescription>
+                          </div>
+                        </div>
                         <FormMessage />
                       </FormItem>
                     )}

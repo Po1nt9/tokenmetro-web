@@ -137,6 +137,8 @@ export function auditFieldLabel(key: string, t: TFunction): string {
       return t('Previous value')
     case 'to':
       return t('New value')
+    case 'value':
+      return t('New value')
     case 'action':
       return t('Operation')
     case 'method':

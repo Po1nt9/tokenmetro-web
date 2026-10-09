@@ -55,6 +55,18 @@ const quotaSchema = z.object({
   QuotaForNewUser: z.coerce.number().min(0),
   QuotaForInviter: z.coerce.number().min(0),
   QuotaForInvitee: z.coerce.number().min(0),
+  // The option stores a decimal ratio (0.05 = 5%); the form edits percentages.
+  InviteRewardRatio: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number({ error: () => i18next.t('Please enter a valid number') })
+      .min(0, {
+        error: () => i18next.t('Must be greater than or equal to 0'),
+      })
+      .max(100, {
+        error: () => i18next.t('Must be less than or equal to 100'),
+      })
+  ),
   TopUpLink: z.string(),
   quota_setting: z.object({
     enable_free_model_pre_consume: z.boolean(),
@@ -104,12 +116,22 @@ export function QuotaSettingsSection({
         unknown,
         QuotaFormValues
       >,
-      defaultValues,
+      defaultValues: {
+        ...defaultValues,
+        // Stored as a decimal ratio (0.05); edited as a percentage (5).
+        InviteRewardRatio: Number(
+          ((defaultValues.InviteRewardRatio ?? 0) * 100).toFixed(4)
+        ),
+      },
       onSubmit: async (_data, changedFields) => {
         for (const [key, value] of Object.entries(changedFields)) {
           await updateOption.mutateAsync({
             key,
-            value: value as string | number | boolean,
+            // Percent input -> decimal option value (5 -> 0.05).
+            value:
+              key === 'InviteRewardRatio'
+                ? (value as number) / 100
+                : (value as string | number | boolean),
           })
         }
       },
@@ -273,6 +295,35 @@ export function QuotaSettingsSection({
                     {t('Quota given to invited users ({{formattedQuota}})', {
                       formattedQuota: formatQuotaInputValue(field.value),
                     })}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='InviteRewardRatio'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Invitation Reward Ratio (%)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={100}
+                      step='any'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Percentage of each invitee recharge credited to the inviter. Set to 0 to disable the reward.'
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -33,7 +33,7 @@ import { api } from '@/lib/api'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { QuotaSettingsSection } from '../quota-settings-section'
 
-function Fixture() {
+function Fixture({ inviteRewardRatio }: { inviteRewardRatio: number }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
   return (
     <>
@@ -44,6 +44,7 @@ function Fixture() {
             QuotaForNewUser: 0,
             QuotaForInviter: 0,
             QuotaForInvitee: 0,
+            InviteRewardRatio: inviteRewardRatio,
             TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
@@ -57,12 +58,14 @@ function Fixture() {
   )
 }
 
-async function renderSettings() {
+async function renderSettings(inviteRewardRatio = 0.05) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const router = createRouter({
-    routeTree: createRootRoute({ component: Fixture }),
+    routeTree: createRootRoute({
+      component: () => <Fixture inviteRewardRatio={inviteRewardRatio} />,
+    }),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(
@@ -142,6 +145,56 @@ test.each(['', '-1'])(
     fireEvent.change(input, { target: { value } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(api.put).not.toHaveBeenCalled()
+  }
+)
+
+test.each([
+  [0.05, 5],
+  [0.07, 7],
+])(
+  'stored invite reward ratio %s is displayed as %s percent',
+  async (storedRatio, percent) => {
+    await renderSettings(storedRatio)
+    expect(
+      screen.getByRole('spinbutton', { name: 'Invitation Reward Ratio (%)' })
+    ).toHaveValue(percent)
+  }
+)
+
+test('edited invite reward percentage is saved as a decimal ratio', async () => {
+  const user = userEvent.setup()
+  await renderSettings()
+  const input = screen.getByRole('spinbutton', {
+    name: 'Invitation Reward Ratio (%)',
+  })
+  await user.clear(input)
+  await user.type(input, '12.5')
+  await user.tab()
+  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'InviteRewardRatio',
+      value: 0.125,
+    })
+  )
+})
+
+test.each([
+  ['', 'Please enter a valid number'],
+  ['-1', 'Must be greater than or equal to 0'],
+  ['101', 'Must be less than or equal to 100'],
+])(
+  'invalid invite reward ratio "%s" shows "%s" and prevents saving',
+  async (value, message) => {
+    await renderSettings()
+    const input = screen.getByRole('spinbutton', {
+      name: 'Invitation Reward Ratio (%)',
+    })
+    fireEvent.change(input, { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByText(message)).toBeInTheDocument()
     expect(api.put).not.toHaveBeenCalled()
   }
 )

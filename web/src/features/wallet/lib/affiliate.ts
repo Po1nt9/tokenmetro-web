@@ -16,6 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { StatusBadgeProps } from '@/components/status-badge'
+
+import type { AffiliateRewardStatus } from '../types'
+
 // ============================================================================
 // Affiliate Functions
 // ============================================================================
@@ -26,4 +30,35 @@ For commercial licensing, please contact support@quantumnous.com
 export function generateAffiliateLink(affCode: string): string {
   if (typeof window === 'undefined') return ''
   return `${window.location.origin}/sign-up?aff=${affCode}`
+}
+
+interface AffiliateRewardStatusConfig {
+  variant: StatusBadgeProps['variant']
+  /** i18n key, rendered through t() at the call site */
+  label: string
+}
+
+const AFFILIATE_REWARD_STATUS_CONFIG: Record<
+  AffiliateRewardStatus,
+  AffiliateRewardStatusConfig
+> = {
+  pending: { variant: 'warning', label: 'Pending Settlement' },
+  credited: { variant: 'success', label: 'Credited' },
+  voided: { variant: 'danger', label: 'Voided' },
+}
+
+/**
+ * Status badge configuration for one reward ledger row. Unknown statuses fall
+ * back to the raw value so a future backend state stays visible instead of
+ * rendering blank.
+ */
+export function getAffiliateRewardStatusConfig(
+  status: string
+): AffiliateRewardStatusConfig {
+  return (
+    AFFILIATE_REWARD_STATUS_CONFIG[status as AffiliateRewardStatus] ?? {
+      variant: 'neutral',
+      label: status,
+    }
+  )
 }

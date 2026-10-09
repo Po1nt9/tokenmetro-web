@@ -17,12 +17,32 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   type RenderResult,
 } from '@testing-library/react'
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import type { Redemption } from '../../types'
@@ -53,6 +73,7 @@ type ApiMethod = (url: string, data?: unknown) => Promise<{ data: unknown }>
 type MockableApi = {
   get: ApiMethod
   put: ApiMethod
+  post: ApiMethod
 }
 type RenderedDrawer = {
   result: RenderResult
@@ -65,10 +86,15 @@ type CurrencyFixture = {
 const apiClient = api as unknown as MockableApi
 const originalGet = apiClient.get
 const originalPut = apiClient.put
+const originalPost = apiClient.post
 const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
-function redemption(id: number, quota = 500001): Redemption {
+function redemption(
+  id: number,
+  quota = 500001,
+  rewardEligible = true
+): Redemption {
   return {
     id,
     user_id: 1,
@@ -76,10 +102,13 @@ function redemption(id: number, quota = 500001): Redemption {
     key: `key-${id}`,
     status: 1,
     quota,
+    outcome_type: 'balance',
+    subscription_plan_id: 0,
     created_time: 1,
     redeemed_time: 0,
     expired_time: 0,
     used_user_id: 0,
+    reward_eligible: rewardEligible,
   }
 }
 
@@ -93,7 +122,7 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
-function drawerTree(currentRow: Redemption) {
+function drawerTree(currentRow?: Redemption) {
   return (
     <I18nextProvider i18n={i18n}>
       <RedemptionsProvider>
@@ -109,7 +138,7 @@ function drawerTree(currentRow: Redemption) {
 }
 
 async function renderDrawer(
-  currentRow: Redemption,
+  currentRow?: Redemption,
   currency: CurrencyFixture = {
     quotaDisplayType: 'USD',
     usdExchangeRate: 1,
@@ -180,6 +209,7 @@ async function waitForLoadedForm(): Promise<void> {
 afterEach(() => {
   apiClient.get = originalGet
   apiClient.put = originalPut
+  apiClient.post = originalPost
   Reflect.set(console, 'log', originalConsoleLog)
   toast.dismiss()
   localStorage.clear()
@@ -189,7 +219,12 @@ afterEach(() => {
 describe('redemption drawer', () => {
   test('shows the reported CNY quota without floating-point noise', async () => {
     const original = redemption(1, 13888889)
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
 
     await renderDrawer(original, {
       quotaDisplayType: 'CNY',
@@ -242,7 +277,12 @@ describe('redemption drawer', () => {
   test('keeps the original quota when another field changes', async () => {
     const original = redemption(1)
     const updates: Array<Record<string, unknown>> = []
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
     apiClient.put = async (_url, data) => {
       expect(data && typeof data === 'object').toBeTruthy()
       updates.push(data as Record<string, unknown>)
@@ -264,7 +304,12 @@ describe('redemption drawer', () => {
   test('recalculates quota when the quota field changes', async () => {
     const original = redemption(1)
     const updates: Array<Record<string, unknown>> = []
-    apiClient.get = async () => ({ data: { success: true, data: original } })
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
     apiClient.put = async (_url, data) => {
       expect(data && typeof data === 'object').toBeTruthy()
       updates.push(data as Record<string, unknown>)
@@ -278,6 +323,57 @@ describe('redemption drawer', () => {
     await waitFor(() => expect(updates).toHaveLength(1))
 
     expect(updates[0]?.quota).toBe(1000000)
+  })
+
+  test('submits the selected subscription plan without wallet quota', async () => {
+    const original = redemption(1)
+    const updates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return {
+          data: {
+            success: true,
+            data: [
+              {
+                plan: {
+                  id: 42,
+                  title: 'Monthly access',
+                  enabled: true,
+                },
+              },
+            ],
+          },
+        }
+      }
+      return { data: { success: true, data: original } }
+    }
+    apiClient.put = async (_url, data) => {
+      updates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Monthly access' })
+    )
+    changeInput(getControlByLabel('Name'), 'subscription-code')
+    submitForm()
+
+    await waitFor(() => expect(updates).toHaveLength(1))
+    expect(updates[0]?.outcome_type).toBe('subscription')
+    expect(updates[0]?.subscription_plan_id).toBe(42)
+    expect(updates[0]?.quota).toBe(0)
   })
 
   test('ignores an older response after switching records', async () => {
@@ -314,5 +410,189 @@ describe('redemption drawer', () => {
 
     expect(updates[0]?.id).toBe(2)
     expect(updates[0]?.quota).toBe(1000001)
+  })
+
+  test('drops stale plan options when the plans request fails after a successful load', async () => {
+    const original = redemption(1)
+    let planRequests = 0
+    Reflect.set(console, 'log', () => undefined)
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        planRequests += 1
+        if (planRequests === 1) {
+          return {
+            data: {
+              success: true,
+              data: [
+                { plan: { id: 42, title: 'Monthly access', enabled: true } },
+              ],
+            },
+          }
+        }
+        return { data: { success: false, message: 'plans unavailable' } }
+      }
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Monthly access' })
+    )
+
+    await act(() => i18n.changeLanguage('zh'))
+    await waitFor(() => expect(planRequests).toBe(2))
+    await waitFor(() =>
+      expect(document.body).toHaveTextContent('plans unavailable')
+    )
+    // The language change also re-runs the record-load effect, which resets the
+    // form back to the stored balance outcome; wait for that reset before
+    // selecting the subscription outcome again.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('combobox', { name: 'Subscription plan' })
+      ).not.toBeInTheDocument()
+    )
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Redemption result' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Subscription plan' })
+    )
+    await user.click(
+      screen.getByRole('combobox', { name: 'Subscription plan' })
+    )
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+
+    await act(() => i18n.changeLanguage('en'))
+  })
+
+  test('blocks a zero-quota balance batch with a field error and no create request', async () => {
+    const creates: unknown[] = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+
+    changeInput(getControlByLabel('Quota (USD)'), '0')
+    submitForm()
+
+    await waitFor(() =>
+      expect(getControlByLabel('Quota (USD)')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    )
+    expect(
+      await screen.findByText('Quota must be greater than zero')
+    ).toBeInTheDocument()
+    expect(creates).toEqual([])
+  })
+
+  test('counts a batch as reward-eligible unless the operator opts out', async () => {
+    const creates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Not reward-eligible (granted/trial/compensation batches)',
+      })
+    ).not.toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'sold batch')
+    submitForm()
+
+    await waitFor(() => expect(creates).toHaveLength(1))
+    expect(creates[0]?.reward_eligible).toBe(true)
+  })
+
+  test('sends the not-reward-eligible opt-out for granted batches', async () => {
+    const creates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.post = async (_url, data) => {
+      creates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: ['key-1'] } }
+    }
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    const user = userEvent.setup()
+    const optOut = screen.getByRole('checkbox', {
+      name: 'Not reward-eligible (granted/trial/compensation batches)',
+    })
+    await user.click(optOut)
+    expect(optOut).toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'granted batch')
+    submitForm()
+
+    await waitFor(() => expect(creates).toHaveLength(1))
+    expect(creates[0]?.reward_eligible).toBe(false)
+  })
+
+  test('echoes a stored opt-out and keeps it when saving', async () => {
+    const original = redemption(1, 500001, false)
+    const updates: Array<Record<string, unknown>> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/subscription/admin/plans') {
+        return { data: { success: true, data: [] } }
+      }
+      return { data: { success: true, data: original } }
+    }
+    apiClient.put = async (_url, data) => {
+      updates.push(data as Record<string, unknown>)
+      return { data: { success: true, data: original } }
+    }
+
+    await renderDrawer(original)
+    await waitForLoadedForm()
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Not reward-eligible (granted/trial/compensation batches)',
+      })
+    ).toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'renamed')
+    submitForm()
+
+    await waitFor(() => expect(updates).toHaveLength(1))
+    expect(updates[0]?.reward_eligible).toBe(false)
   })
 })

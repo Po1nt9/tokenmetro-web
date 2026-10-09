@@ -26,8 +26,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
+import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import { formatQuota } from '@/lib/format'
 
-import type { TopupInfo } from '../types'
+import type { RedemptionPreview, TopupInfo } from '../types'
 
 /**
  * 兑换码在链动小铺（wzyp.cn）的发售地址。
@@ -47,7 +49,11 @@ interface RechargeFormCardProps {
   redemptionCode: string
   onRedemptionCodeChange: (code: string) => void
   onRedeem: () => void
+  preview: RedemptionPreview | null
+  onConfirmRedemption: () => void
+  onCancelPreview: () => void
   redeeming: boolean
+  confirmingRedemption: boolean
   loading?: boolean
   onOpenBilling?: () => void
 }
@@ -57,7 +63,11 @@ export function RechargeFormCard({
   redemptionCode,
   onRedemptionCodeChange,
   onRedeem,
+  preview,
+  onConfirmRedemption,
+  onCancelPreview,
   redeeming,
+  confirmingRedemption,
   loading,
   onOpenBilling,
 }: RechargeFormCardProps) {
@@ -94,8 +104,10 @@ export function RechargeFormCard({
 
   return (
     <TitledCard
-      title={t('Add Funds')}
-      description={t('Pick an amount, buy a code, then redeem it here')}
+      title={t('Buy and Redeem')}
+      description={t(
+        'Buy a code from the ChainDong Shop, then preview and confirm it here'
+      )}
       icon={<WalletCards className='h-4 w-4' />}
       iconTone='success'
       disableHoverEffect
@@ -152,7 +164,17 @@ export function RechargeFormCard({
           </div>
 
           <div className='border-t pt-4 sm:pt-5'>
-            <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+            <form
+              className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (preview) {
+                  onConfirmRedemption()
+                } else {
+                  onRedeem()
+                }
+              }}
+            >
               <div className='relative'>
                 {/* 纯装饰的输入框前缀，用静音色：它当区块标记时的琥珀色底是提醒用的，
                     挂到输入框上会变成没有缘由的高饱和色 */}
@@ -163,19 +185,91 @@ export function RechargeFormCard({
                   onChange={(e) => onRedemptionCodeChange(e.target.value)}
                   placeholder={t('Paste your redemption code')}
                   aria-label={t('Redemption code')}
+                  disabled={confirmingRedemption}
                   className='h-9 min-w-0 pl-9'
                 />
               </div>
               <Button
-                onClick={onRedeem}
-                disabled={redeeming}
+                type='submit'
+                disabled={
+                  redeeming || confirmingRedemption || !redemptionCode.trim()
+                }
                 variant='outline'
                 className='h-9 px-4'
               >
                 {redeeming && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-                {t('Redeem')}
+                {preview ? t('Confirm redemption') : t('Preview redemption')}
               </Button>
-            </div>
+            </form>
+            {preview && (
+              <div
+                role='status'
+                className='mt-3 space-y-2 rounded-md border p-3 text-sm'
+              >
+                {preview.outcome_type === 'balance' ? (
+                  <p>
+                    {t('Wallet balance will increase by {{quota}}', {
+                      quota: formatQuota(preview.wallet_quota ?? 0),
+                    })}
+                  </p>
+                ) : (
+                  <>
+                    <p>{preview.subscription?.plan_title}</p>
+                    <p>
+                      {t('Validity')}:{' '}
+                      {formatDuration(
+                        preview.subscription
+                          ? {
+                              duration_unit: preview.subscription.duration_unit,
+                              duration_value:
+                                preview.subscription.duration_value,
+                              custom_seconds:
+                                preview.subscription.custom_seconds,
+                            }
+                          : {},
+                        t
+                      )}
+                    </p>
+                    <p>
+                      {t('Quota')}:{' '}
+                      {formatQuota(preview.subscription?.quota ?? 0)}
+                    </p>
+                    <p>
+                      {t('Reset period')}:{' '}
+                      {formatResetPeriod(
+                        preview.subscription
+                          ? {
+                              quota_reset_period:
+                                preview.subscription.reset_period,
+                              quota_reset_custom_seconds:
+                                preview.subscription.reset_custom_seconds,
+                            }
+                          : {},
+                        t
+                      )}
+                    </p>
+                    {(preview.subscription?.upgrade_group ||
+                      preview.subscription?.downgrade_group) && (
+                      <p>
+                        {t('Group effect')}:{' '}
+                        {preview.subscription.upgrade_group || t('No change')} →{' '}
+                        {preview.subscription.downgrade_group ||
+                          t('Restore previous group')}
+                      </p>
+                    )}
+                  </>
+                )}
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={onCancelPreview}
+                  disabled={redeeming}
+                >
+                  {t('Cancel')}
+                </Button>
+              </div>
+            )}
           </div>
         </>
       ) : (

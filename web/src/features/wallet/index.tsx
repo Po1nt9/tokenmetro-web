@@ -25,7 +25,6 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
-import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
@@ -40,23 +39,20 @@ export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
-  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(
     !!props.initialShowHistory
   )
   const [redemptionCode, setRedemptionCode] = useState('')
-  const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
+  const [subscriptionRefreshVersion, setSubscriptionRefreshVersion] =
+    useState(0)
 
   const { topupInfo, loading: topupLoading } = useTopupInfo()
   const {
     affiliateLink,
     loading: affiliateLoading,
-    transferQuota,
     transferring,
+    transferQuota,
   } = useAffiliate()
-  const { redeeming, redeemCode } = useRedemption()
-
-  // Fetch and refresh user data
   const fetchUser = useCallback(async () => {
     try {
       setUserLoading(true)
@@ -72,6 +68,23 @@ export function Wallet(props: WalletProps) {
       setUserLoading(false)
     }
   }, [t])
+
+  const {
+    redeeming,
+    confirmingRedemption,
+    preview,
+    previewCode,
+    confirmRedemption,
+    clearPreview,
+  } = useRedemption({
+    onSuccess: (outcome) => {
+      if (typeof outcome === 'number' || outcome.outcome_type === 'balance') {
+        void fetchUser()
+        return
+      }
+      setSubscriptionRefreshVersion((version) => version + 1)
+    },
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -98,31 +111,35 @@ export function Wallet(props: WalletProps) {
     }
   }, [props.initialShowHistory])
 
-  // Handle redemption
   const handleRedeem = async () => {
-    if (!redemptionCode) return
+    if (!redemptionCode.trim()) return
+    await previewCode(redemptionCode.trim())
+  }
 
-    const success = await redeemCode(redemptionCode)
+  const handleConfirmRedemption = async () => {
+    if (!redemptionCode.trim() || !preview) return
+    const success = await confirmRedemption(redemptionCode.trim())
     if (success) {
       setRedemptionCode('')
-      await fetchUser()
     }
   }
 
-  // Handle transfer
-  const handleTransfer = async (amount: number) => {
-    const success = await transferQuota(amount)
-    if (success) {
-      await fetchUser()
-    }
-    return success
+  const handleRedemptionCodeChange = (code: string) => {
+    clearPreview()
+    setRedemptionCode(code)
   }
 
-  const handleSubscriptionAvailabilityChange = useCallback(
-    (available: boolean) => {
-      setShowSubscriptionPanel(available)
+  // After a transfer the reward pool shrinks and the wallet balance grows, so
+  // the card figures and the stats card must both be refetched.
+  const handleTransferRewards = useCallback(
+    async (quota: number) => {
+      const success = await transferQuota(quota)
+      if (success) {
+        await fetchUser()
+      }
+      return success
     },
-    []
+    [transferQuota, fetchUser]
   )
 
   return (
@@ -130,56 +147,43 @@ export function Wallet(props: WalletProps) {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 overflow-hidden sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
 
-            <div
-              className={
-                showSubscriptionPanel
-                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start'
-                  : 'grid gap-4'
-              }
-            >
-              <div id='wallet-add-funds' className='scroll-mt-4'>
+            <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] xl:items-start'>
+              <div id='wallet-add-funds' className='min-w-0 scroll-mt-4'>
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   redemptionCode={redemptionCode}
-                  onRedemptionCodeChange={setRedemptionCode}
+                  onRedemptionCodeChange={handleRedemptionCodeChange}
                   onRedeem={handleRedeem}
+                  preview={preview}
+                  onConfirmRedemption={handleConfirmRedemption}
+                  onCancelPreview={clearPreview}
                   redeeming={redeeming}
+                  confirmingRedemption={confirmingRedemption}
                   loading={topupLoading}
                   onOpenBilling={() => setBillingDialogOpen(true)}
                 />
               </div>
 
-              <SubscriptionPlansCard
-                topupInfo={topupInfo}
-                onAvailabilityChange={handleSubscriptionAvailabilityChange}
-                userQuota={user?.quota}
-                onPurchaseSuccess={fetchUser}
-              />
+              <div className='min-w-0'>
+                <SubscriptionPlansCard
+                  refreshVersion={subscriptionRefreshVersion}
+                />
+              </div>
             </div>
 
             <AffiliateRewardsCard
               user={user}
               affiliateLink={affiliateLink}
-              onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                topupInfo?.payment_compliance_confirmed !== false
-              }
               loading={affiliateLoading}
+              transferring={transferring}
+              onTransfer={handleTransferRewards}
             />
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
-
-      <TransferDialog
-        open={transferDialogOpen}
-        onOpenChange={setTransferDialogOpen}
-        onConfirm={handleTransfer}
-        availableQuota={user?.aff_quota ?? 0}
-        transferring={transferring}
-      />
 
       <BillingHistoryDialog
         open={billingDialogOpen}

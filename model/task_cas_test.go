@@ -54,6 +54,7 @@ func TestMain(m *testing.M) {
 		&SubscriptionPlan{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
+		&Redemption{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
 		&SystemInstance{},

@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"sort"
@@ -204,6 +205,14 @@ func UpdateOption(c *gin.Context) {
 	case "QuotaForInviter", "QuotaForInvitee":
 		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
 			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+			return
+		}
+	case "InviteRewardRatio":
+		// Stored as a decimal share (0.05 = 5%); out-of-range values would turn
+		// into a payout multiple of the recharge face value.
+		ratio, parseErr := strconv.ParseFloat(strings.TrimSpace(option.Value.(string)), 64)
+		if parseErr != nil || math.IsNaN(ratio) || ratio < 0 || ratio > 1 {
+			common.ApiErrorMsg(c, fmt.Sprintf("邀请返利比例必须是 0 到 1 之间的小数（0.05 表示 5%%），当前值：%s", option.Value))
 			return
 		}
 	default:
@@ -496,10 +505,16 @@ func UpdateOption(c *gin.Context) {
 		}
 		return
 	}
-	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
-	recordManageAudit(c, "option.update", map[string]any{
+	// 出于安全考虑默认只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
+	auditParams := map[string]any{
 		"key": option.Key,
-	})
+	}
+	if option.Key == "InviteRewardRatio" {
+		// InviteRewardRatio 不是密钥，且返利比例是钱口径（0.05 表示按充值额的 5% 返利），
+		// 审计必须能回答「改成了什么」，因此只有该键额外记录新值，其它键维持「只记键名」约定。
+		auditParams["value"] = option.Value
+	}
+	recordManageAudit(c, "option.update", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

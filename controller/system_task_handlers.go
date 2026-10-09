@@ -13,15 +13,16 @@ import (
 )
 
 // RegisterScheduledSystemTasks wires the periodic channel test, upstream model
-// update, and async task polling (Midjourney / Suno / video) jobs into the
-// system task framework so a DB lease dedups execution across multiple master
-// instances and each run is recorded as one task row. Call this before
-// service.StartSystemTaskRunner.
+// update, invitation reward settlement, and async task polling (Midjourney /
+// Suno / video) jobs into the system task framework so a DB lease dedups
+// execution across multiple master instances and each run is recorded as one
+// task row. Call this before service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(invitationRewardSettlementHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -149,6 +150,31 @@ func (asyncTaskPollHandler) NewPayload() any { return nil }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+// invitationRewardSettlementHandler settles pending invitation rewards whose
+// observation window has closed into the inviter's affiliate pool. It runs
+// hourly and stays enabled unconditionally: an empty scan is one cheap query,
+// and while the reward ratio is 0 no pending row exists in the first place.
+type invitationRewardSettlementHandler struct{}
+
+func (invitationRewardSettlementHandler) Type() string {
+	return model.SystemTaskTypeInvitationRewardSettlement
+}
+
+func (invitationRewardSettlementHandler) Enabled() bool { return true }
+
+func (invitationRewardSettlementHandler) Interval() time.Duration { return time.Hour }
+
+func (invitationRewardSettlementHandler) NewPayload() any { return nil }
+
+func (invitationRewardSettlementHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := model.SettleDueInvitationRewards(ctx, common.GetTimestamp(), model.InvitationRewardSettlementBatchSize)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 

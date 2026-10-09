@@ -125,6 +125,10 @@ var TelegramBotName = ""
 var QuotaForNewUser = 0
 var QuotaForInviter = 0
 var QuotaForInvitee = 0
+
+// InviteRewardRatio is the share of a recharge event paid to the inviter, as a
+// decimal (0.05 = 5%). Zero disables invitation rewards.
+var InviteRewardRatio = 0.0
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false

@@ -33,7 +33,44 @@ export interface ApiResponse<T = unknown> {
  * Standard API response types
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
-export type RedemptionResponse = ApiResponse<number>
+export interface RedemptionSubscriptionPreview {
+  plan_title: string
+  duration_unit: 'year' | 'month' | 'day' | 'hour' | 'custom'
+  duration_value: number
+  custom_seconds?: number
+  quota: number
+  reset_period: 'never' | 'daily' | 'weekly' | 'monthly' | 'custom'
+  reset_custom_seconds?: number
+  upgrade_group?: string
+  downgrade_group?: string
+}
+
+export interface RedemptionPreview {
+  outcome_type: 'balance' | 'subscription'
+  wallet_quota?: number
+  balance_after?: number
+  subscription?: RedemptionSubscriptionPreview
+}
+
+export interface RedemptionSubscription {
+  id: number
+  plan_id: number
+  amount_total: number
+  end_time: number
+}
+
+export interface RedemptionOutcome {
+  outcome_type: 'balance' | 'subscription'
+  wallet_quota?: number
+  subscription?: RedemptionSubscription
+  recharge_event?: {
+    redemption_id: number
+    sale_order_id?: string | null
+  }
+}
+
+export type RedemptionResponse = ApiResponse<RedemptionOutcome | number>
+export type RedemptionPreviewResponse = ApiResponse<RedemptionPreview>
 export type AmountResponse = ApiResponse<string>
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
   url?: string
@@ -41,6 +78,7 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
+export type AffiliateRewardsResponse = ApiResponse<AffiliateRewardOverview>
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -221,6 +259,42 @@ export interface AffiliateTransferRequest {
 }
 
 /**
+ * Terminal or in-flight state of one invitation reward ledger row:
+ * pending (observation window open), credited (settled into the reward
+ * balance) or voided (refunded, never settled).
+ */
+export type AffiliateRewardStatus = 'pending' | 'credited' | 'voided'
+
+/**
+ * One invitation reward row earned by the signed-in inviter.
+ */
+export interface AffiliateRewardEntry {
+  /** Ledger row ID */
+  id: number
+  /** Recharge time (unix seconds) */
+  created_time: number
+  /** Invitee username; empty when the invitee account was removed */
+  invitee_username: string
+  /** Reward basis (the redeemed code's face value) in quota units */
+  basis_quota: number
+  /** Reward amount in quota units */
+  reward_quota: number
+  /** Current ledger status */
+  status: AffiliateRewardStatus
+}
+
+/**
+ * The signed-in inviter's own reward ledger: the quota still inside the
+ * observation window plus the most recent rows.
+ */
+export interface AffiliateRewardOverview {
+  /** Sum of every pending row, not just the listed ones */
+  pending_quota: number
+  /** Most recent ledger rows, newest first */
+  rewards: AffiliateRewardEntry[]
+}
+
+/**
  * User wallet data
  */
 export interface UserWalletData {
@@ -234,9 +308,9 @@ export interface UserWalletData {
   used_quota: number
   /** Total request count */
   request_count: number
-  /** Affiliate quota (pending rewards) */
+  /** Reward balance settled and not yet transferred to the wallet */
   aff_quota: number
-  /** Total affiliate quota earned (historical) */
+  /** Total affiliate quota ever settled into the reward balance */
   aff_history_quota: number
   /** Number of successful affiliate invites */
   aff_count: number

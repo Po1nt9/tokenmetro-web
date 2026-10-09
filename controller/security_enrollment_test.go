@@ -57,6 +57,16 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 	logDB, _ := newAuditTestDatabase(t, dialect, dsn)
 	db.Logger = logger.Default.LogMode(logger.Silent)
 	logDB.Logger = logger.Default.LogMode(logger.Silent)
+	if dialect == "sqlite" {
+		// SQLite allows a single writer; serialize this fixture's connections so
+		// concurrent transactions wait instead of failing with SQLITE_BUSY.
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		sqlDB.SetMaxOpenConns(1)
+		logSQLDB, err := logDB.DB()
+		require.NoError(t, err)
+		logSQLDB.SetMaxOpenConns(1)
+	}
 	versionQuery := "SELECT VERSION()"
 	if dialect == "sqlite" {
 		versionQuery = "SELECT sqlite_version()"

@@ -87,6 +87,17 @@ export async function updateRedemptionStatus(
   return res.data
 }
 
+// Void the pending invitation reward produced by one redemption code (refund
+// bookkeeping). The backend rejects rewards that already settled.
+export async function voidRedemptionReward(
+  redemptionId: number
+): Promise<ApiResponse> {
+  const res = await api.post('/api/redemption/reward/void', {
+    redemption_id: redemptionId,
+  })
+  return res.data
+}
+
 // Delete a single redemption code
 export async function deleteRedemption(id: number): Promise<ApiResponse> {
   const res = await api.delete(`/api/redemption/${id}/`)

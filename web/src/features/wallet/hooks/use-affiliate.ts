@@ -21,7 +21,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { getSelf } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -62,7 +61,8 @@ export function useAffiliate() {
     copyToClipboard(affiliateLink)
   }, [affiliateLink, copyToClipboard])
 
-  // Transfer affiliate quota to balance
+  // Transfer affiliate quota to balance. The caller refreshes the user data
+  // after a successful transfer, so this hook only performs the transfer.
   const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
     try {
       setTransferring(true)
@@ -70,7 +70,6 @@ export function useAffiliate() {
 
       if (response.success) {
         toast.success(response.message || i18next.t('Transfer successful'))
-        await getSelf()
         return true
       }
 
